@@ -1,88 +1,80 @@
 "use client";
 
-import { useState } from "react";
-import { agentTeams, playgroundHistory } from "@/lib/mock-data";
-import { Play, ChevronDown, Terminal, Clock } from "lucide-react";
+import { useState, useRef } from "react";
+import { agentTeams, playgroundHistory as initialHistory } from "@/lib/mock-data";
+import { Play, ChevronDown, Terminal, Clock, Square } from "lucide-react";
 
-type OutputLine = { text: string; type: "info" | "success" | "error" | "system" };
-
-const fakeOutputs: Record<string, OutputLine[]> = {
-  "Marketing": [
-    { text: "> Connecting to Marketing agent (port 8001)...", type: "system" },
-    { text: "✓ Agent online", type: "success" },
-    { text: "> Sending task...", type: "system" },
-    { text: "Processing: analyzing task intent...", type: "info" },
-    { text: "Scheduling posts for the week...", type: "info" },
-    { text: "✓ 5 posts queued successfully", type: "success" },
-    { text: "Mon 12:00 – 'New menu item: grilled chicken tacos'", type: "info" },
-    { text: "Wed 12:00 – 'Customer review highlight ⭐⭐⭐⭐⭐'", type: "info" },
-    { text: "Fri 18:00 – 'Weekend special: 2x1 on all combos'", type: "info" },
-  ],
-  "Accounting": [
-    { text: "> Connecting to Accounting agent (port 8002)...", type: "system" },
-    { text: "✓ Agent online", type: "success" },
-    { text: "> Sending task...", type: "system" },
-    { text: "Querying transaction records...", type: "info" },
-    { text: "✓ Summary ready", type: "success" },
-    { text: "Income this month:  $22,400.00", type: "info" },
-    { text: "Expenses this month: $14,200.00", type: "info" },
-    { text: "Net profit:          $8,200.00  (+12% vs last month)", type: "success" },
-  ],
-  "Messaging": [
-    { text: "> Connecting to Messaging agent (port 8003)...", type: "system" },
-    { text: "✓ Agent online", type: "success" },
-    { text: "> Sending task...", type: "system" },
-    { text: "Relaying to Claude API...", type: "info" },
-    { text: "✓ Response generated", type: "success" },
-    { text: "Agent is ready to handle customer queries.", type: "info" },
-  ],
-  "Website Builder": [
-    { text: "> Connecting to Website Builder (port 3001)...", type: "system" },
-    { text: "✗ Connection refused – agent not running", type: "error" },
-    { text: "Tip: This agent has not been implemented yet.", type: "info" },
-  ],
-  "All Teams": [
-    { text: "> Running health check on all teams...", type: "system" },
-    { text: "Marketing   (8001) – ✓ online", type: "success" },
-    { text: "Accounting  (8002) – ✓ online", type: "success" },
-    { text: "Messaging   (8003) – ✓ online", type: "success" },
-    { text: "Website Bld (3001) – ✗ not responding", type: "error" },
-    { text: "3/4 teams healthy", type: "info" },
-  ],
+type HistoryItem = {
+  id: string;
+  target: string;
+  prompt: string;
+  result: string;
+  timestamp: string;
 };
+
+const targets = ["All Teams", ...agentTeams.map((t) => t.name)];
 
 export default function PlaygroundPage() {
   const [target, setTarget] = useState("All Teams");
   const [prompt, setPrompt] = useState("");
   const [running, setRunning] = useState(false);
-  const [output, setOutput] = useState<OutputLine[]>([]);
+  const [output, setOutput] = useState("");
   const [open, setOpen] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>(initialHistory);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const targets = ["All Teams", ...agentTeams.map((t) => t.name)];
-
-  function runTask() {
+  async function runTask() {
     if (!prompt.trim() || running) return;
     setRunning(true);
-    setOutput([]);
-    const lines = fakeOutputs[target] ?? fakeOutputs["All Teams"];
-    let i = 0;
-    const interval = setInterval(() => {
-      if (i < lines.length) {
-        setOutput((prev) => [...prev, lines[i]]);
-        i++;
-      } else {
-        clearInterval(interval);
-        setRunning(false);
+    setOutput("");
+
+    abortRef.current = new AbortController();
+
+    try {
+      const res = await fetch("/api/task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target, prompt }),
+        signal: abortRef.current.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        setOutput(`✗ Error: ${err}`);
+        return;
       }
-    }, 300);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setOutput(accumulated);
+      }
+
+      // Save to history
+      const now = new Date();
+      const timestamp = `Today ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+      setHistory((prev) => [
+        { id: Date.now().toString(), target, prompt, result: accumulated.slice(0, 120).replace(/\n/g, " "), timestamp },
+        ...prev,
+      ]);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== "AbortError") {
+        setOutput("✗ Request failed. Check your API key in .env.local.");
+      }
+    } finally {
+      setRunning(false);
+    }
   }
 
-  const lineColor: Record<OutputLine["type"], string> = {
-    system: "#6b7280",
-    info: "#a5b4fc",
-    success: "#22c55e",
-    error: "#ef4444",
-  };
+  function stop() {
+    abortRef.current?.abort();
+    setRunning(false);
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-5xl">
@@ -113,6 +105,7 @@ export default function PlaygroundPage() {
                 border: "1px solid #2a2a3a",
                 borderRadius: "8px",
                 color: "#e2e2f0",
+                cursor: "pointer",
               }}
               className="flex items-center gap-2 px-3 py-2 text-sm"
             >
@@ -144,6 +137,8 @@ export default function PlaygroundPage() {
                       textAlign: "left",
                       padding: "8px 12px",
                       fontSize: "13px",
+                      border: "none",
+                      cursor: "pointer",
                     }}
                     className="hover:bg-white/5 transition-colors"
                   >
@@ -161,6 +156,9 @@ export default function PlaygroundPage() {
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="Describe what you want the agent to do..."
           rows={4}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.metaKey) runTask();
+          }}
           style={{
             backgroundColor: "#1a1a24",
             border: "1px solid #2a2a3a",
@@ -172,37 +170,53 @@ export default function PlaygroundPage() {
             padding: "12px",
             outline: "none",
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && e.metaKey) runTask();
-          }}
         />
 
         <div className="flex items-center justify-between">
           <span style={{ color: "#4b5563" }} className="text-xs">
             ⌘ + Enter to run
           </span>
-          <button
-            onClick={runTask}
-            disabled={!prompt.trim() || running}
-            style={{
-              backgroundColor: running || !prompt.trim() ? "#2a2a3a" : "#6366f1",
-              color: running || !prompt.trim() ? "#4b5563" : "white",
-              borderRadius: "8px",
-              border: "none",
-              cursor: running || !prompt.trim() ? "not-allowed" : "pointer",
-              fontWeight: 500,
-              fontSize: "14px",
-            }}
-            className="flex items-center gap-2 px-4 py-2 transition-colors"
-          >
-            <Play size={14} />
-            {running ? "Running..." : "Run Task"}
-          </button>
+          <div className="flex gap-2">
+            {running && (
+              <button
+                onClick={stop}
+                style={{
+                  backgroundColor: "rgba(239,68,68,0.1)",
+                  color: "#ef4444",
+                  border: "1px solid rgba(239,68,68,0.3)",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                }}
+                className="flex items-center gap-2 px-4 py-2"
+              >
+                <Square size={13} />
+                Stop
+              </button>
+            )}
+            <button
+              onClick={runTask}
+              disabled={!prompt.trim() || running}
+              style={{
+                backgroundColor: running || !prompt.trim() ? "#2a2a3a" : "#6366f1",
+                color: running || !prompt.trim() ? "#4b5563" : "white",
+                borderRadius: "8px",
+                border: "none",
+                cursor: running || !prompt.trim() ? "not-allowed" : "pointer",
+                fontWeight: 500,
+                fontSize: "14px",
+              }}
+              className="flex items-center gap-2 px-4 py-2 transition-colors"
+            >
+              <Play size={14} />
+              {running ? "Running..." : "Run Task"}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Output terminal */}
-      {(output.length > 0 || running) && (
+      {/* Terminal output */}
+      {(output || running) && (
         <div
           style={{ backgroundColor: "#0d0d12", border: "1px solid #2a2a3a", borderRadius: "12px" }}
           className="p-5"
@@ -213,21 +227,22 @@ export default function PlaygroundPage() {
               Output — {target}
             </span>
           </div>
-          <div className="flex flex-col gap-1">
-            {output.map((line, i) => (
-              <p
-                key={i}
-                style={{ color: lineColor[line.type], fontFamily: "var(--font-geist-mono)", fontSize: "13px", lineHeight: "1.6" }}
-              >
-                {line.text}
-              </p>
-            ))}
-            {running && (
-              <p style={{ color: "#6b7280", fontFamily: "var(--font-geist-mono)", fontSize: "13px" }}>
-                ▊
-              </p>
+          <pre
+            style={{
+              color: "#a5b4fc",
+              fontFamily: "var(--font-geist-mono)",
+              fontSize: "13px",
+              lineHeight: "1.7",
+              whiteSpace: "pre-wrap",
+              margin: 0,
+            }}
+          >
+            {output}
+            {running && !output && (
+              <span style={{ color: "#6b7280" }}>Connecting...</span>
             )}
-          </div>
+            {running && <span style={{ opacity: 0.5 }}>▊</span>}
+          </pre>
         </div>
       )}
 
@@ -243,11 +258,12 @@ export default function PlaygroundPage() {
           </h2>
         </div>
         <div className="flex flex-col gap-3">
-          {playgroundHistory.map((h) => (
+          {history.map((h) => (
             <div
               key={h.id}
-              style={{ backgroundColor: "#1a1a24", borderRadius: "8px" }}
-              className="px-4 py-3"
+              style={{ backgroundColor: "#1a1a24", borderRadius: "8px", cursor: "pointer" }}
+              className="px-4 py-3 hover:border hover:border-indigo-500/20 transition-colors"
+              onClick={() => { setTarget(h.target); setPrompt(h.prompt); }}
             >
               <div className="flex items-center justify-between mb-1">
                 <span style={{ color: "#a5b4fc" }} className="text-xs font-medium">
@@ -260,7 +276,10 @@ export default function PlaygroundPage() {
               <p style={{ color: "#e2e2f0" }} className="text-sm mb-1">
                 {h.prompt}
               </p>
-              <p style={{ color: "#22c55e", fontFamily: "var(--font-geist-mono)", fontSize: "12px" }}>
+              <p
+                style={{ color: "#22c55e", fontFamily: "var(--font-geist-mono)", fontSize: "12px" }}
+                className="truncate"
+              >
                 {h.result}
               </p>
             </div>

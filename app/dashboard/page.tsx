@@ -1,5 +1,7 @@
-import { agentTeams, clients, recentActivity } from "@/lib/mock-data";
+import { agentTeams as mockTeams, clients, recentActivity } from "@/lib/mock-data";
+import type { AgentStatus } from "@/lib/mock-data";
 import { StatusBadge } from "@/components/StatusBadge";
+import { RefreshButton } from "@/components/RefreshButton";
 import {
   Users,
   Building2,
@@ -9,6 +11,21 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
+
+async function getLiveTeamStatuses(): Promise<Record<string, AgentStatus>> {
+  try {
+    const base = process.env.AGENTS_BASE_URL ?? "http://localhost";
+    const res = await fetch(`${base.replace(/\/$/, "")}/api/health`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return {};
+    const data: Array<{ id: string; status: AgentStatus }> = await res.json();
+    return Object.fromEntries(data.map((d) => [d.id, d.status]));
+  } catch {
+    return {};
+  }
+}
 
 function StatCard({
   label,
@@ -62,7 +79,12 @@ const activityTypeStyle: Record<string, { color: string; bg: string }> = {
   chat: { color: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
 };
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const liveStatuses = await getLiveTeamStatuses();
+  const agentTeams = mockTeams.map((t) => ({
+    ...t,
+    status: liveStatuses[t.id] ?? t.status,
+  }));
   const healthyCount = agentTeams.filter((t) => t.status === "healthy").length;
   const totalTasks = agentTeams.reduce((s, t) => s + t.tasksCompleted, 0);
   const activeClients = clients.filter((c) => c.status === "active").length;
@@ -70,13 +92,16 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-6 p-6 max-w-6xl">
       {/* Header */}
-      <div>
-        <h1 style={{ color: "#e2e2f0" }} className="text-xl font-semibold">
-          Overview
-        </h1>
-        <p style={{ color: "#6b7280" }} className="text-sm mt-0.5">
-          Your agent operations at a glance
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 style={{ color: "#e2e2f0" }} className="text-xl font-semibold">
+            Overview
+          </h1>
+          <p style={{ color: "#6b7280" }} className="text-sm mt-0.5">
+            Your agent operations at a glance
+          </p>
+        </div>
+        <RefreshButton />
       </div>
 
       {/* Stats */}

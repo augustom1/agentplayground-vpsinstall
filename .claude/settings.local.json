@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"TODO\\\\|FIXME\\\\|XXX\\\\|STUB\\\\|placeholder\" /c/Users/Augus/OneDrive/Escritorio/agent_dashboard_ui_app/app --include=*.ts --include=*.tsx)",
+      "Bash(npm test:*)",
+      "Bash(npx prisma:*)",
+      "Bash(mkdir -p \"app/\\(auth\\)\")",
+      "Bash(cp \"app/login/page.tsx\" \"app/\\(auth\\)/login/page.tsx\")",
+      "Bash(cp \"app/setup/page.tsx\" \"app/\\(auth\\)/setup/page.tsx\")",
+      "Bash(rm \"app/login/page.tsx\" \"app/setup/page.tsx\")",
+      "Bash(mkdir -p \"app/\\(auth\\)/login\" \"app/\\(auth\\)/setup\")"
+    ]
+  }
+}

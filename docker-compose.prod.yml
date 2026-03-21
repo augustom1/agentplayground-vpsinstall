@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────────────────────
+# Agent Dashboard — Production Overlay
+# ─────────────────────────────────────────────────────────────────
+# Adds Traefik reverse proxy with automatic HTTPS (Let's Encrypt).
+# Use together with docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Required env vars (add to .env.local):
+#   DOMAIN=yourdomain.com
+#   ACME_EMAIL=you@yourdomain.com
+#   CRON_SECRET=<random secret string>
+# ─────────────────────────────────────────────────────────────────
+
+services:
+  # ── Traefik reverse proxy + automatic HTTPS ──
+  traefik:
+    image: traefik:v3.0
+    container_name: agent-dashboard-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    command:
+      # Entrypoints
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Redirect all HTTP → HTTPS
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
+      # Docker provider
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      # Let's Encrypt TLS challenge
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    networks:
+      - proxy
+
+  # ── Override dashboard: remove direct port, add Traefik labels ──
+  dashboard:
+    ports: !reset []          # Remove the 3000:3000 port from base compose
+    environment:
+      - NEXT_PUBLIC_APP_URL=https://${DOMAIN}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      # HTTPS router
+      - traefik.http.routers.dashboard.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls=true
+      - traefik.http.routers.dashboard.tls.certresolver=le
+      - traefik.http.services.dashboard.loadbalancer.server.port=3000
+      # Timeouts for long-running AI streaming requests
+      - traefik.http.middlewares.dashboard-timeout.headers.customrequestheaders.X-Forwarded-Proto=https
+      - traefik.http.routers.dashboard.middlewares=dashboard-timeout
+    networks:
+      - default
+      - proxy
+
+  # ── Lock postgres to internal network only ──
+  postgres:
+    ports: !reset []          # Don't expose DB port publicly in production
+
+volumes:
+  traefik-certs:
+    driver: local
+
+networks:
+  proxy:
+    name: traefik-proxy
+    driver: bridge

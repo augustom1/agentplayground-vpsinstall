@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Agent Dashboard
 
-## Getting Started
+> AI-native operations platform — build, manage, and deploy agent teams through conversation.
 
-First, run the development server:
+## Quick Start
 
 ```bash
+# 1. Clone and configure
+cp .env.local.example .env.local
+# Edit .env.local with your API keys
+
+# 2. Install dependencies
+npm install
+
+# 3. Start development
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Production Deployment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Start full stack (Next.js + PostgreSQL + FileBrowser)
+docker compose up -d --build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Run database migrations
+docker compose exec dashboard npx prisma db push
+```
 
-## Learn More
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full VPS + domain + SSL guide.
 
-To learn more about Next.js, take a look at the following resources:
+## Stack
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router) |
+| Runtime | React 19 / Node 20+ |
+| Database | PostgreSQL + pgvector |
+| ORM | Prisma 7 |
+| AI | Anthropic Claude |
+| Styling | Tailwind CSS v4 |
+| Files | FileBrowser (container) |
+| Deployment | Docker Compose |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Architecture
 
-## Deploy on Vercel
+```
+Chat Interface (primary)
+  ├── Claude + Tools → create teams, agents, skills
+  ├── DB Agent → manages all database access
+  └── File Agent → manages files via FileBrowser
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Dashboard (customizable)
+  ├── Widget-based, empty by default
+  ├── Agent Lab (teams + playground)
+  ├── Schedule (monthly calendar)
+  └── Files (FileBrowser)
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Project Structure
+
+```
+app/
+  api/          ← REST API routes
+  agent-lab/    ← merged playground + teams
+  chat/         ← AI chat (primary interface)
+  dashboard/    ← customizable widget dashboard
+  schedule/     ← monthly calendar
+  settings/     ← configuration
+lib/
+  modules/      ← extractable modules for reuse
+  prisma.ts     ← database client
+  chat-tools.ts ← Claude tool definitions
+  db-agent.ts   ← database access layer
+prisma/
+  schema.prisma ← database schema (15 tables)
+docs/
+  architecture.md
+  client-version.md
+```

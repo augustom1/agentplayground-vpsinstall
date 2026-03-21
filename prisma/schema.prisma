@@ -1,0 +1,317 @@
+// Prisma Schema — Agent Dashboard Platform
+// PostgreSQL with pgvector extension for embeddings
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+// ─── Users & Auth ────────────────────────────────────
+// Roles:  admin | user | viewer
+// Plans:  free | pro | enterprise   ← ready for billing later
+// Add planExpiresAt + a payments table when you go paid.
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  passwordHash  String
+  role          String    @default("user")        // admin | user | viewer
+  plan          String    @default("free")        // free | pro | enterprise
+  planExpiresAt DateTime?                         // null = no expiry
+  active        Boolean   @default(true)          // soft-disable without deleting
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// ─── Agent Teams ─────────────────────────────────────
+
+model AgentTeam {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  port        Int
+  status      String   @default("idle") // healthy | idle | error | deploying
+  language    String   @default("Python / FastAPI")
+  config      Json?    // arbitrary config JSON
+  permissions String[] // permission scopes (see lib/agent-permissions.ts)
+  isSystemTeam Boolean @default(false) // true for DB Agent, File Manager
+  isImported  Boolean  @default(false)
+  sourceUrl   String?  // URL if downloaded from registry
+
+  tasksCompleted Int    @default(0)
+  lastActivity   String @default("Never")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  agents        Agent[]
+  tasks         Task[]
+  recurringTasks RecurringTask[]
+  scheduledJobs ScheduledJob[]
+  skills        Skill[]
+  cliFunctions  CliFunction[]
+  widgets       Widget[]
+  activityLogs  ActivityLog[]
+
+  @@map("agent_teams")
+}
+
+// ─── Individual Agents ───────────────────────────────
+
+model Agent {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  model        String   @default("claude-sonnet-4-6") // AI model used
+  capabilities String[] // list of capability tags
+  systemPrompt String?  @db.Text
+  temperature  Float    @default(0.7)
+  maxTokens    Int      @default(4096)
+
+  teamId String
+  team   AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("agents")
+}
+
+// ─── Tasks ───────────────────────────────────────────
+
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?  @db.Text
+  prompt      String?  @db.Text
+  result      String?  @db.Text
+  status      String   @default("pending") // pending | running | completed | failed
+  priority    String   @default("medium")  // low | medium | high | urgent
+
+  teamId String
+  team   AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("tasks")
+}
+
+// ─── Recurring Tasks ─────────────────────────────────
+
+model RecurringTask {
+  id          String @id @default(cuid())
+  title       String
+  description String? @db.Text
+  prompt      String? @db.Text
+  cron        String  // cron expression (e.g. "0 9 * * 1" = every Monday 9am)
+  timezone    String  @default("UTC")
+  enabled     Boolean @default(true)
+
+  teamId String
+  team   AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  lastRunAt DateTime?
+  nextRunAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("recurring_tasks")
+}
+
+// ─── Scheduled Jobs (Calendar) ───────────────────────
+
+model ScheduledJob {
+  id           String  @id @default(cuid())
+  title        String
+  description  String?
+  scheduledFor DateTime
+  recurring    String  @default("none") // none | daily | weekly | monthly
+  status       String  @default("pending") // pending | running | completed | failed
+  isOffHours   Boolean @default(false)
+
+  teamId   String
+  teamName String
+  team     AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("scheduled_jobs")
+}
+
+// ─── Skills ──────────────────────────────────────────
+
+model Skill {
+  id          String @id @default(cuid())
+  name        String
+  description String @db.Text
+  category    String @default("general") // general | data | communication | code | research
+  instructions String? @db.Text // how the agent should use this skill
+  examples    Json?   // example inputs/outputs
+
+  teamId String
+  team   AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("skills")
+}
+
+// ─── CLI Functions ───────────────────────────────────
+
+model CliFunction {
+  id          String  @id @default(cuid())
+  name        String
+  command     String  // the actual CLI command template
+  description String?
+  args        Json?   // argument schema
+  dangerous   Boolean @default(false) // requires confirmation?
+
+  teamId String
+  team   AgentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("cli_functions")
+}
+
+// ─── Improvements / Learnings ────────────────────────
+
+model Improvement {
+  id          String @id @default(cuid())
+  title       String
+  description String @db.Text
+  category    String @default("general") // performance | accuracy | efficiency | ux
+  impact      String @default("medium")  // low | medium | high
+  source      String? // what triggered this improvement
+  applied     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("improvements")
+}
+
+// ─── Dashboard Widgets ───────────────────────────────
+
+model Widget {
+  id       String @id @default(cuid())
+  type     String // stat | feed | calendar | custom
+  title    String
+  icon     String @default("zap")
+  size     String @default("md") // sm | md | lg
+  position Int    @default(0)
+  config   Json?  // widget-specific config
+
+  teamId String?
+  team   AgentTeam? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("widgets")
+}
+
+// ─── Activity Log ────────────────────────────────────
+
+model ActivityLog {
+  id        String @id @default(cuid())
+  action    String
+  type      String // task | deploy | error | chat | import | export
+  details   String? @db.Text
+  teamName  String?
+
+  teamId String?
+  team   AgentTeam? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@map("activity_logs")
+}
+
+// ─── Chat History ────────────────────────────────────
+
+model ChatConversation {
+  id       String @id @default(cuid())
+  title    String?
+  
+  messages ChatMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("chat_conversations")
+}
+
+model ChatMessage {
+  id      String @id @default(cuid())
+  role    String // user | assistant
+  content String @db.Text
+
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("chat_messages")
+}
+
+// ─── Playground History ──────────────────────────────
+
+model PlaygroundRun {
+  id     String @id @default(cuid())
+  target String
+  prompt String @db.Text
+  result String @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@map("playground_runs")
+}
+
+// ─── Agent Team Configs (Import/Export) ──────────────
+
+model AgentTeamConfig {
+  id          String @id @default(cuid())
+  name        String
+  description String?
+  version     String @default("1.0.0")
+  author      String?
+  configJson  Json   // full team config for import/export
+  sourceUrl   String? // if downloaded from registry
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("agent_team_configs")
+}
+
+// ─── Vector Embeddings (pgvector) ────────────────────
+
+model Embedding {
+  id        String                   @id @default(cuid())
+  content   String                   @db.Text   // the original text
+  vector    Unsupported("vector(1536)")          // 1536-dim for OpenAI ada-002 compatible
+  metadata  Json?                    // source info, tags, etc.
+  sourceType String                  // agent | task | skill | improvement | knowledge
+  sourceId   String                  // ID of the source record
+
+  createdAt DateTime @default(now())
+
+  @@map("embeddings")
+}

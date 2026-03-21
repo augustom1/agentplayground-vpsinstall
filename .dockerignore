@@ -1,0 +1,33 @@
+# ── Dependencies ──
+node_modules
+npm-debug.log*
+
+# ── Build artifacts ──
+.next
+out
+
+# ── Git ──
+.git
+.gitignore
+
+# ── IDE / OS ──
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Env secrets ──
+.env
+.env.local
+.env.*.local
+
+# ── Docs ──
+*.md
+!README.md
+
+# ── Docker ──
+Dockerfile
+docker-compose.yml
+docker-compose*.yml

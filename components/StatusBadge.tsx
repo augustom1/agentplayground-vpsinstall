@@ -1,22 +1,29 @@
-import { cn } from "@/lib/utils";
-import type { AgentStatus } from "@/lib/mock-data";
+export type AgentStatus = "healthy" | "idle" | "error" | "deploying";
 
-const config: Record<AgentStatus, { label: string; color: string; dot: string }> = {
-  healthy: { label: "Healthy", color: "rgba(34,197,94,0.15)", dot: "#22c55e" },
-  idle: { label: "Idle", color: "rgba(245,158,11,0.15)", dot: "#f59e0b" },
-  error: { label: "Error", color: "rgba(239,68,68,0.15)", dot: "#ef4444" },
-  deploying: { label: "Deploying", color: "rgba(99,102,241,0.15)", dot: "#6366f1" },
+const config: Record<AgentStatus, { label: string; bg: string; dot: string }> = {
+  healthy: { label: "Healthy", bg: "var(--color-green-dim)", dot: "var(--color-green)" },
+  idle: { label: "Idle", bg: "var(--color-yellow-dim)", dot: "var(--color-yellow)" },
+  error: { label: "Error", bg: "var(--color-red-dim)", dot: "var(--color-red)" },
+  deploying: { label: "Deploying", bg: "rgba(99,102,241,0.12)", dot: "#818cf8" },
 };
 
-export function StatusBadge({ status }: { status: AgentStatus }) {
-  const c = config[status];
+export function StatusBadge({ status }: { status: string }) {
+  const c = config[status as AgentStatus] ?? config.idle;
   return (
     <span
-      style={{ backgroundColor: c.color, borderRadius: "20px" }}
       className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium"
+      style={{ backgroundColor: c.bg, borderRadius: "20px" }}
     >
       <span
-        style={{ backgroundColor: c.dot, width: "6px", height: "6px", borderRadius: "50%", display: "inline-block" }}
+        className={status === "healthy" ? "dot-pulse" : ""}
+        style={{
+          backgroundColor: c.dot,
+          color: c.dot,
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          display: "inline-block",
+        }}
       />
       <span style={{ color: c.dot }}>{c.label}</span>
     </span>

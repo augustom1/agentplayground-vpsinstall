@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────
+# Agent Dashboard — Docker Compose (Full Stack)
+# ─────────────────────────────────────────────
+# Includes: Next.js app + PostgreSQL w/ pgvector + cron executor
+#
+# Quick start:
+#   docker compose up -d --build
+#
+# With env file:
+#   docker compose --env-file .env.local up -d --build
+# ─────────────────────────────────────────────
+
+services:
+  # ── PostgreSQL + pgvector ──────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent-dashboard-db
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_dashboard}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Next.js Dashboard ─────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    env_file:
+      - .env.local
+    environment:
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agent_dashboard}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - filedata:/app/data/files
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── Cron Executor (recurring tasks) ───────
+  cron:
+    image: alpine:3.19
+    container_name: agent-dashboard-cron
+    restart: unless-stopped
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    environment:
+      - CRON_SECRET=${CRON_SECRET:-}
+    command: >
+      sh -c "echo '* * * * * wget -qO- --header=\"Authorization: Bearer $$CRON_SECRET\" http://dashboard:3000/api/cron > /dev/null 2>&1' | crontab - && crond -f -l 8"
+
+  # ── FileBrowser (open source file manager) ──
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: agent-dashboard-files
+    restart: unless-stopped
+    ports:
+      - "${FILEBROWSER_PORT:-8080}:80"
+    volumes:
+      - filedata:/srv
+    environment:
+      - FB_NOAUTH=true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:
+    driver: local
+  filedata:
+    driver: local

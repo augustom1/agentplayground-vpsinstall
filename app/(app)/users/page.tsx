@@ -355,7 +355,7 @@ export default function UsersPage() {
                   <label className="text-[11px] font-medium block mb-1" style={{ color: "var(--color-muted)" }}>{label}</label>
                   <input
                     type={type}
-                    value={(form as Record<string, string>)[key]}
+                    value={(form as Record<string, unknown>)[key] as string}
                     onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                     placeholder={placeholder}
                     required={required}

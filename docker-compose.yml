@@ -133,9 +133,18 @@ services:
       start_period: 30s
 
   # ── Ollama (local LLM backend) ────────────────────────────────
-  # Uses a custom image that auto-pulls qwen2.5:3b + qwen2.5:7b on first start.
-  # Models are stored in the ollamadata volume — downloaded once, persist forever.
-  # To add/change models: set OLLAMA_AUTO_PULL in the environment block below.
+  # Uses a custom image that auto-pulls models on first start.
+  # Models are stored in OLLAMA_DATA_PATH (default: /var/lib/ollama).
+  #
+  # On Hetzner: set OLLAMA_DATA_PATH in .env.local to your mounted volume path,
+  # e.g. OLLAMA_DATA_PATH=/mnt/ollama-data  (the 100 GB Hetzner volume)
+  # This keeps 90+ GB of models off the root disk.
+  #
+  # RAM guide for this server (16 GB):
+  #   qwen2.5:3b  ~2 GB  — fast, automation/coding
+  #   qwen2.5:7b  ~5 GB  — balanced reasoning  ← default
+  #   qwen2.5:14b ~9 GB  — best quality, fits in RAM
+  # To use 14b: set OLLAMA_AUTO_PULL="qwen2.5:7b qwen2.5:14b" in .env.local
   ollama:
     build:
       context: .
@@ -148,7 +157,7 @@ services:
       # Space-separated list — pulled automatically on every start (no-op if present)
       - OLLAMA_AUTO_PULL=${OLLAMA_AUTO_PULL:-qwen2.5:3b qwen2.5:7b}
     volumes:
-      - ollamadata:/root/.ollama
+      - ${OLLAMA_DATA_PATH:-/var/lib/ollama}:/root/.ollama
     # ── GPU support (uncomment if your server has an NVIDIA GPU) ────
     # deploy:
     #   resources:
@@ -209,5 +218,6 @@ volumes:
   redisdata:
   filedata:
   n8ndata:
-  ollamadata:
   portainerdata:
+  # NOTE: Ollama data uses a bind mount (OLLAMA_DATA_PATH), not a named volume.
+  # This allows pointing it at a dedicated disk/volume (e.g. Hetzner Block Storage).

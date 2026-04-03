@@ -103,12 +103,21 @@ else
   echo ""
   read -rp "  Anthropic API key (sk-ant-..., press Enter to skip): " ANTHROPIC_API_KEY
 
+  # ── Ollama data path (use a dedicated disk/volume to keep models off root) ──
+  echo ""
+  info "Ollama models can be large (3–15 GB each). Point this at a dedicated"
+  info "volume/disk so they don't fill your root disk."
+  info "Examples: /mnt/ollama-data (Hetzner block volume)  or  /var/lib/ollama (root disk)"
+  read -rp "  Ollama data path [/var/lib/ollama]: " OLLAMA_DATA_PATH
+  OLLAMA_DATA_PATH="${OLLAMA_DATA_PATH:-/var/lib/ollama}"
+  $SUDO mkdir -p "$OLLAMA_DATA_PATH"
+  log "Ollama data path: $OLLAMA_DATA_PATH"
+
   # ── Auto-generate secrets ────────────────────────────────────────
   gen_secret() { openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 64; }
   CRON_SECRET=$(gen_secret)
   N8N_ENCRYPTION_KEY=$(gen_secret)
   AUTH_SECRET=$(gen_secret)
-  OPEN_WEBUI_SECRET=$(gen_secret)
   REDIS_PASSWORD=$(gen_secret | cut -c1-24)
 
   # ── Write .env.local ─────────────────────────────────────────────
@@ -140,6 +149,14 @@ CRON_SECRET=${CRON_SECRET}
 # ── AI Provider ──────────────────────────────────────────────────
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
+# ── Ollama ───────────────────────────────────────────────────────
+# Path on the HOST where Ollama stores models. Use a dedicated volume.
+# On Hetzner: mount the block volume at /mnt/ollama-data and set this.
+OLLAMA_DATA_PATH=${OLLAMA_DATA_PATH}
+# Models to auto-pull on every container start (space-separated, no-op if present)
+# RAM guide: 3b ~2GB | 7b ~5GB | 14b ~9GB (fits in 16 GB RAM)
+OLLAMA_AUTO_PULL=qwen2.5:3b qwen2.5:7b
+
 # ── n8n ──────────────────────────────────────────────────────────
 N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
 N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
@@ -147,14 +164,10 @@ N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
 N8N_HOST=n8n.${DOMAIN}
 N8N_PROTOCOL=https
 
-# ── Open WebUI ───────────────────────────────────────────────────
-OPEN_WEBUI_SECRET=${OPEN_WEBUI_SECRET}
-
 # ── Port overrides (optional — only needed for local dev) ─────────
 # DASHBOARD_PORT=3000
 # N8N_PORT=5678
 # OLLAMA_PORT=11434
-# OPEN_WEBUI_PORT=8081
 # NGINX_PORT=8082
 # FILEBROWSER_PORT=8083
 # PORTAINER_PORT=9000
@@ -355,7 +368,6 @@ echo ""
 echo -e "  ${BOLD}Services:${NC}"
 echo -e "  ${CYAN}https://app.${SRC_DOMAIN}${NC}       Agent Dashboard"
 echo -e "  ${CYAN}https://n8n.${SRC_DOMAIN}${NC}       n8n Automation"
-echo -e "  ${CYAN}https://ai.${SRC_DOMAIN}${NC}        Open WebUI (Ollama)"
 echo -e "  ${CYAN}https://files.${SRC_DOMAIN}${NC}     FileBrowser"
 echo -e "  ${CYAN}https://manage.${SRC_DOMAIN}${NC}    Portainer (Docker UI)"
 echo -e "  ${CYAN}https://${SRC_DOMAIN}${NC}           Your Website (Nginx)"

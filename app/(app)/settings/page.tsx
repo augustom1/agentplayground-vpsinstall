@@ -1,4 +1,5 @@
 import { CheckCircle2, XCircle, ExternalLink, Cpu, Sparkles } from "lucide-react";
+import { OllamaPanel } from "@/components/OllamaPanel";
 
 function EnvRow({
   name,
@@ -19,7 +20,7 @@ function EnvRow({
     >
       <div className="flex-1 min-w-0 pr-4">
         <div className="flex items-center gap-2 mb-0.5">
-          <code className="text-[12px]" style={{ color: "#a5b4fc" }}>{name}</code>
+          <code className="text-[12px]" style={{ color: "var(--color-text)" }}>{name}</code>
           {required && (
             <span
               className="text-[9px] px-1.5 py-0.5 rounded font-medium"
@@ -73,10 +74,10 @@ const providers = [
   {
     id: "ollama",
     name: "Ollama (Local)",
-    description: "Run models locally — No API key needed",
+    description: "Run models locally — free, private, no API key",
     icon: Cpu,
     color: "var(--color-yellow)",
-    status: "planned",
+    status: "active",
   },
 ];
 
@@ -93,6 +94,12 @@ export default function SettingsPage() {
       value: process.env.DATABASE_URL,
       description: "PostgreSQL connection string — required for all data persistence",
       required: true,
+    },
+    {
+      name: "OLLAMA_BASE_URL",
+      value: process.env.OLLAMA_BASE_URL,
+      description: "Ollama API base URL (default: http://localhost:11434)",
+      required: false,
     },
     {
       name: "AGENTS_BASE_URL",
@@ -124,9 +131,30 @@ export default function SettingsPage() {
       description: "Website Builder agent port (default: 3001)",
       required: false,
     },
+    {
+      name: "RESEND_API_KEY",
+      value: process.env.RESEND_API_KEY,
+      description: "Resend API key — enables email notifications (resend.com)",
+      required: false,
+    },
+    {
+      name: "NOTIFICATION_EMAIL",
+      value: process.env.NOTIFICATION_EMAIL,
+      description: "Recipient address for task complete/fail alerts",
+      required: false,
+    },
+    {
+      name: "NOTIFICATION_FROM_EMAIL",
+      value: process.env.NOTIFICATION_FROM_EMAIL,
+      description: "Sender address (default: notifications@agentplayground.net)",
+      required: false,
+    },
   ];
 
-  const allRequiredSet = vars.filter((v) => v.required).every((v) => !!v.value);
+  const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
+  const hasOllamaUrl = !!process.env.OLLAMA_BASE_URL;
+  const hasDatabaseUrl = !!process.env.DATABASE_URL;
+  const allRequiredSet = hasDatabaseUrl && (hasAnthropicKey || hasOllamaUrl);
 
   return (
     <div className="flex flex-col gap-5 p-6 max-w-3xl animate-fade-in">
@@ -135,7 +163,7 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--color-muted)" }}>
-          Configuration — edit <code style={{ color: "#a5b4fc" }}>.env.local</code> then restart
+          Configuration — edit <code style={{ color: "var(--color-text)" }}>.env.local</code> then restart
         </p>
       </div>
 
@@ -164,7 +192,7 @@ export default function SettingsPage() {
               key={p.id}
               className="glass-card-interactive p-3 flex flex-col gap-2"
               style={{
-                borderColor: p.status === "active" ? "rgba(99,102,241,0.4)" : undefined,
+                borderColor: p.status === "active" ? "rgba(255,255,255,0.08)" : undefined,
                 opacity: p.status === "planned" ? 0.6 : 1,
               }}
             >
@@ -208,6 +236,9 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Ollama Panel */}
+      <OllamaPanel />
+
       {/* Environment Variables */}
       <div className="glass-card px-4">
         <div className="py-3.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
@@ -219,6 +250,74 @@ export default function SettingsPage() {
           <EnvRow key={v.name} {...v} />
         ))}
       </div>
+
+      {/* Notifications */}
+      {(() => {
+        const hasResendKey = !!process.env.RESEND_API_KEY;
+        const hasNotificationEmail = !!process.env.NOTIFICATION_EMAIL;
+        const notificationsConfigured = hasResendKey && hasNotificationEmail;
+        return (
+          <div className="glass-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-xs uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>
+                Email Notifications
+              </h2>
+              <div className="flex items-center gap-1.5">
+                {notificationsConfigured ? (
+                  <>
+                    <CheckCircle2 size={13} style={{ color: "var(--color-green)" }} />
+                    <span className="text-[11px] font-medium" style={{ color: "var(--color-green)" }}>Configured</span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle size={13} style={{ color: "var(--color-muted)" }} />
+                    <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>Not configured</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <p className="text-[11px] mb-3" style={{ color: "var(--color-muted)" }}>
+              When configured, AgentPlayground emails you when tasks complete or fail. Powered by{" "}
+              <a href="https://resend.com" target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-text)" }}>Resend</a>.
+              Add the vars below to <code style={{ color: "var(--color-text)" }}>.env.local</code> then restart.
+            </p>
+            <div
+              className="rounded-lg px-3"
+              style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+            >
+              {[
+                { name: "RESEND_API_KEY", set: hasResendKey, desc: "Resend API key (resend.com)" },
+                { name: "NOTIFICATION_EMAIL", set: hasNotificationEmail, desc: "Recipient address" },
+                { name: "NOTIFICATION_FROM_EMAIL", set: !!process.env.NOTIFICATION_FROM_EMAIL, desc: "Sender address — optional, defaults to notifications@agentplayground.net" },
+              ].map((item, i, arr) => (
+                <div
+                  key={item.name}
+                  className="flex items-center justify-between py-2.5"
+                  style={{ borderBottom: i < arr.length - 1 ? "1px solid var(--color-border)" : undefined }}
+                >
+                  <div>
+                    <code className="text-[11px]" style={{ color: "var(--color-text)" }}>{item.name}</code>
+                    <p className="text-[10px] mt-0.5" style={{ color: "var(--color-muted)" }}>{item.desc}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 ml-3">
+                    {item.set ? (
+                      <>
+                        <CheckCircle2 size={12} style={{ color: "var(--color-green)" }} />
+                        <span className="text-[11px]" style={{ color: "var(--color-green)" }}>Set</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle size={12} style={{ color: "var(--color-muted)" }} />
+                        <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>Not set</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Quick links */}
       <div className="glass-card p-4">
@@ -238,7 +337,7 @@ export default function SettingsPage() {
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 hover:opacity-80 transition-opacity text-sm"
-              style={{ color: "#a5b4fc" }}
+              style={{ color: "var(--color-text)" }}
             >
               <ExternalLink size={12} />
               {link.label}

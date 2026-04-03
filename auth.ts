@@ -12,6 +12,7 @@ import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { authConfig } from "@/auth.config";
 
 // ─── Type augmentation ────────────────────────────────
 declare module "next-auth" {
@@ -38,30 +39,7 @@ declare module "next-auth/jwt" {
 
 // ─── NextAuth config ──────────────────────────────────
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: "jwt" },
-
-  pages: {
-    signIn: "/login",
-  },
-
-  callbacks: {
-    jwt({ token, user }) {
-      if (user) {
-        token.id   = user.id;
-        token.role = user.role ?? "user";
-        token.plan = user.plan ?? "free";
-      }
-      return token;
-    },
-    session({ session, token }) {
-      if (session.user) {
-        session.user.id   = token.id   as string;
-        session.user.role = token.role as string;
-        session.user.plan = token.plan as string;
-      }
-      return session;
-    },
-  },
+  ...authConfig,
 
   providers: [
     Credentials({

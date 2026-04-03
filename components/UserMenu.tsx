@@ -47,7 +47,7 @@ export function UserMenu({ collapsed }: { collapsed: boolean }) {
               className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.05] transition-colors"
               style={{ color: "var(--color-text)", fontSize: "13px", textDecoration: "none" }}
             >
-              <ShieldCheck size={13} style={{ color: "#818cf8" }} />
+              <ShieldCheck size={13} style={{ color: "var(--color-text-secondary)" }} />
               Manage Users
             </Link>
           )}
@@ -86,8 +86,8 @@ export function UserMenu({ collapsed }: { collapsed: boolean }) {
             width: "28px",
             height: "28px",
             borderRadius: "8px",
-            background: "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(139,92,246,0.3))",
-            color: "#a5b4fc",
+            background: "var(--color-surface-3)",
+            color: "var(--color-text)",
           }}
         >
           {initials}
@@ -103,8 +103,8 @@ export function UserMenu({ collapsed }: { collapsed: boolean }) {
                 <span
                   className="text-[9px] px-1.5 py-0 rounded-full font-medium"
                   style={{
-                    background: role === "admin" ? "rgba(99,102,241,0.12)" : "var(--color-green-dim)",
-                    color: role === "admin" ? "#a5b4fc" : "var(--color-green)",
+                    background: role === "admin" ? "rgba(255,255,255,0.08)" : "var(--color-green-dim)",
+                    color: role === "admin" ? "var(--color-text)" : "var(--color-green)",
                   }}
                 >
                   {role}

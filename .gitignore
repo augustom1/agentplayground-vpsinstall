@@ -41,3 +41,10 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# VPS stack — user-generated site content (tracked via .gitkeep)
+sites/*.conf
+webroot/*/
+
+# VPS stack — generated files (created by setup.sh)
+.env.local

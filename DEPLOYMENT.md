@@ -1,154 +1,260 @@
-# Agent Dashboard — VPS Deployment Guide
+# VPS Master Stack — Deployment Guide
 
-Everything runs in Docker. **No Nginx, no Node.js, no Certbot to install on the host.**
-The stack is: Traefik (HTTPS) → Next.js → PostgreSQL, all in containers.
-
----
-
-## What you need
-
-- A VPS running **Ubuntu 22.04+** (any provider — DigitalOcean, Hetzner, Vultr, etc.)
-- A **domain name** with an A record pointing to your VPS IP
-- Your **Anthropic API key**
-- 5 minutes
+One command turns a fresh VPS into a full production platform:
+agents, automation, AI, website hosting, and database — all containerized, all HTTPS.
 
 ---
 
-## Step 1 — Point your domain
+## What you get
 
-At your domain registrar, create an A record:
+| URL | Service | Purpose |
+|-----|---------|---------|
+| `https://app.DOMAIN` | Agent Dashboard | Your main product |
+| `https://n8n.DOMAIN` | n8n | Visual workflow automation |
+| `https://ai.DOMAIN` | Open WebUI | Chat interface for local LLMs (Ollama) |
+| `https://files.DOMAIN` | FileBrowser | File management UI |
+| `https://manage.DOMAIN` | Portainer | Docker management UI |
+| `https://DOMAIN` | Nginx | Your company website + client sites |
+
+**Infrastructure (internal only):**
+- PostgreSQL + pgvector — shared database server, one DB per service
+- Redis — cache and queues
+- Traefik — reverse proxy, automatic HTTPS via Let's Encrypt
+- Cron — recurring task executor for the Dashboard
+
+---
+
+## VPS Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| RAM | 8 GB | 16 GB |
+| CPU | 4 vCPU | 8 vCPU |
+| Storage | 60 GB | 120 GB |
+| OS | Ubuntu 22.04 | Ubuntu 22.04/24.04 |
+
+> **Ollama note:** Without a GPU, LLMs run on CPU — usable but slow.
+> `llama3.2:3b` works well on CPU. For GPU support, uncomment the `deploy:` block
+> in `docker-compose.yml` and use a GPU-enabled VPS (Hetzner CCX, Lambda Labs, etc.)
+
+---
+
+## One-Command Setup
+
+```bash
+# 1. SSH into your VPS
+ssh root@YOUR_VPS_IP
+
+# 2. Clone your repo
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /opt/vps
+cd /opt/vps
+
+# 3. Run setup (interactive — prompts for domain, passwords, API keys)
+bash setup.sh
+```
+
+`setup.sh` will:
+- Install Docker if not present
+- Prompt for your domain, email, passwords
+- Auto-generate all secrets (AUTH_SECRET, CRON_SECRET, N8N_ENCRYPTION_KEY, etc.)
+- Create Nginx configs and placeholder pages
+- Start the full stack
+- Offer to pull an Ollama LLM model
+
+---
+
+## DNS Setup (do this before or during setup)
+
+At your domain registrar, create two A records:
 
 | Type | Name | Value |
 |------|------|-------|
 | A | `@` | `YOUR_VPS_IP` |
+| A | `*` | `YOUR_VPS_IP` |
 
-DNS propagation takes 1–30 minutes. You can continue setup while waiting.
+The wildcard `*` record covers all subdomains automatically (`app.`, `n8n.`, `ai.`, etc.)
+SSL certificates are issued automatically by Traefik via Let's Encrypt.
 
 ---
 
-## Step 2 — Install Docker on your VPS
+## Manual Setup (without setup.sh)
 
 ```bash
-ssh root@YOUR_VPS_IP
-
+# 1. Install Docker
 curl -fsSL https://get.docker.com | sh
 
-# Verify
-docker --version        # Docker 24+
-docker compose version  # v2.20+
-```
+# 2. Configure environment
+cp .env.example .env.local
+nano .env.local   # fill in DOMAIN, ACME_EMAIL, passwords, API keys
 
----
-
-## Step 3 — Upload the project
-
-**Option A — Git (recommended):**
-```bash
-git clone https://github.com/YOUR_USERNAME/agent-dashboard.git /opt/agent-dashboard
-cd /opt/agent-dashboard
-```
-
-**Option B — SCP from your local machine:**
-```bash
-# Run this on your local machine, not the VPS
-scp -r ./agent_dashboard_ui_app root@YOUR_VPS_IP:/opt/agent-dashboard
-```
-
----
-
-## Step 4 — Configure environment
-
-```bash
-cd /opt/agent-dashboard
-cp .env.local.example .env.local
-nano .env.local
-```
-
-Fill in these values (minimum required):
-
-```env
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-
-POSTGRES_PASSWORD=use-a-strong-random-password
-
-DOMAIN=yourdomain.com
-ACME_EMAIL=you@yourdomain.com
-
-AUTH_SECRET=generate-with-openssl-rand-hex-32
-CRON_SECRET=generate-with-openssl-rand-hex-32
-```
-
-Generate both secrets in one step:
-```bash
-echo "AUTH_SECRET=$(openssl rand -hex 32)" >> .env.local
-echo "CRON_SECRET=$(openssl rand -hex 32)" >> .env.local
-```
-
----
-
-## Step 5 — Deploy
-
-```bash
+# 3. Start the stack
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-That's it. This single command:
-- Builds the Next.js app
-- Starts PostgreSQL with pgvector
-- **Automatically runs database migrations** on first boot
-- Starts Traefik and obtains your SSL certificate from Let's Encrypt
-- Starts the recurring task cron executor
-- Configures automatic HTTP → HTTPS redirect
-
 ---
 
-## Step 6 — Verify
+## Adding Client Websites
 
 ```bash
-# All containers should be running
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+# Creates webroot/clientname/, sites/clientname.conf, reloads Nginx
+./add-site.sh client.mycompany.com
 
-# Check app logs (migrations run first, then app starts)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs dashboard
-
-# Check SSL cert was issued
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs traefik | grep "certificate"
+# Then upload HTML/CSS/JS files to:
+# webroot/client_mycompany_com/
 ```
 
-Visit `https://yourdomain.com` — you will be redirected to `/setup` to create your admin account (this screen appears only once, then disappears forever once an account exists).
+For external domains (e.g. `theclientsdomain.com`), add a Traefik router label to
+the `nginx` service in `docker-compose.prod.yml`:
+
+```yaml
+- traefik.http.routers.clientsite.rule=Host(`theclientsdomain.com`)
+- traefik.http.routers.clientsite.entrypoints=websecure
+- traefik.http.routers.clientsite.tls.certresolver=le
+- traefik.http.services.clientsite.loadbalancer.server.port=80
+```
+
+Then: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
 
 ---
 
-## Updating the application
+## Adding New Services
+
+Every new service follows the same pattern:
+
+**1. Add to `docker-compose.yml`:**
+```yaml
+myservice:
+  image: someimage:latest
+  container_name: vps-myservice
+  restart: unless-stopped
+  environment:
+    - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/myservice
+  depends_on:
+    postgres:
+      condition: service_healthy
+```
+
+**2. Add its database to `scripts/init-db.sh`:**
+```sql
+SELECT 'CREATE DATABASE myservice'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'myservice')\gexec
+```
+
+**3. Add a subdomain in `docker-compose.prod.yml`:**
+```yaml
+myservice:
+  ports: !reset []
+  labels:
+    - traefik.enable=true
+    - traefik.docker.network=proxy
+    - traefik.http.routers.myservice.rule=Host(`myservice.${DOMAIN}`)
+    - traefik.http.routers.myservice.entrypoints=websecure
+    - traefik.http.routers.myservice.tls.certresolver=le
+    - traefik.http.services.myservice.loadbalancer.server.port=PORT
+  networks:
+    - default
+    - proxy
+```
+
+**4. Restart:**
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+---
+
+## Shared Database
+
+All services use one PostgreSQL server with separate databases:
+
+```
+postgres server (vps-postgres)
+  ├── agent_dashboard   ← Dashboard app
+  ├── n8n               ← n8n automation
+  └── <your new apps>   ← add in init-db.sh
+```
+
+This means your AI agents and n8n workflows can query across all your data
+using a single connection string, just switching the database name.
+
+Connect from n8n or any service on the Docker network:
+```
+postgresql://postgres:PASSWORD@postgres:5432/agent_dashboard
+```
+
+---
+
+## Updating the Stack
 
 ```bash
-cd /opt/agent-dashboard
+cd /opt/vps
 git pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-# Migrations run automatically on restart — no manual step needed
+```
+
+Database migrations run automatically on dashboard restart — no manual step needed.
+
+---
+
+## Database Backups
+
+```bash
+# Manual backup of all databases
+./backup-db.sh
+
+# Schedule daily at 3am
+(crontab -l 2>/dev/null; echo "0 3 * * * /opt/vps/backup-db.sh >> /var/log/vps-backup.log 2>&1") | crontab -
+
+# Backup a specific database
+./backup-db.sh agent_dashboard
+```
+
+Backups are stored as compressed `.sql.gz` files in `/opt/backups/`.
+Files older than 7 days are deleted automatically.
+
+---
+
+## Common Commands
+
+```bash
+# View logs for a service
+docker compose logs -f dashboard
+docker compose logs -f n8n
+docker compose logs -f ollama
+
+# Check all container health
+docker compose ps
+
+# Restart a single service
+docker compose restart dashboard
+
+# Pull a new Ollama model
+docker exec vps-ollama ollama pull llama3.1:8b
+
+# List available Ollama models
+docker exec vps-ollama ollama list
+
+# Open a postgres shell (access all databases)
+docker exec -it vps-postgres psql -U postgres
+
+# Reload Nginx after adding a site
+docker exec vps-nginx nginx -s reload
 ```
 
 ---
 
-## Database backups
+## Local Development (no HTTPS)
 
 ```bash
-# Create backup script
-cat > /opt/backup-db.sh << 'EOF'
-#!/bin/bash
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-mkdir -p /opt/backups
-docker compose -f /opt/agent-dashboard/docker-compose.yml exec -T postgres \
-  pg_dump -U postgres agent_dashboard > /opt/backups/db_${TIMESTAMP}.sql
-# Keep only last 7 days
-find /opt/backups -name "db_*.sql" -mtime +7 -delete
-echo "Backup complete: db_${TIMESTAMP}.sql"
-EOF
+# Start without Traefik — ports exposed directly
+docker compose up -d --build
 
-chmod +x /opt/backup-db.sh
-
-# Schedule daily at 3am
-(crontab -l 2>/dev/null; echo "0 3 * * * /opt/backup-db.sh") | crontab -
+# Access:
+# Dashboard:  http://localhost:3000
+# n8n:        http://localhost:5678
+# Open WebUI: http://localhost:8081
+# FileBrowser:http://localhost:8083
+# Portainer:  http://localhost:9000
 ```
 
 ---
@@ -157,17 +263,22 @@ chmod +x /opt/backup-db.sh
 
 ```
 Internet
-  ↓ port 80  → Traefik → redirect to HTTPS
-  ↓ port 443 → Traefik (TLS termination, Let's Encrypt cert)
-                ↓
-                Next.js Dashboard (port 3000, internal only)
-                  ↓
-                  PostgreSQL + pgvector (port 5432, internal only)
+  ↓ :80   → Traefik → redirect to HTTPS
+  ↓ :443  → Traefik (TLS termination, Let's Encrypt certs)
+              ├── app.DOMAIN    → Dashboard  :3000
+              ├── n8n.DOMAIN    → n8n        :5678
+              ├── ai.DOMAIN     → Open WebUI :8080
+              ├── files.DOMAIN  → FileBrowser:80
+              ├── manage.DOMAIN → Portainer  :9000
+              └── DOMAIN / www  → Nginx      :80
+                                    ├── /var/www/main       (company site)
+                                    └── /var/www/SITENAME   (client sites)
 
-Cron (alpine) → pings /api/cron every minute for recurring tasks
+Internal network (not exposed to internet):
+  PostgreSQL :5432  ← Dashboard, n8n, any new service
+  Redis      :6379  ← available for queues/cache
+  Ollama     :11434 ← Open WebUI, Dashboard (via API)
 ```
-
-Postgres is **not exposed** to the internet in production — only accessible within Docker's internal network.
 
 ---
 
@@ -175,18 +286,10 @@ Postgres is **not exposed** to the internet in production — only accessible wi
 
 | Issue | Fix |
 |-------|-----|
-| Certificate not issued | Ensure DNS A record is set and `DOMAIN` in `.env.local` matches exactly |
-| App stuck at "Waiting for database" | `docker compose logs postgres` — check if postgres is healthy |
-| 502 Bad Gateway | App is still starting — wait 20s, then retry |
-| Port 80/443 already in use | Another process is using it: `ss -tlnp \| grep ':80\|:443'` |
-| DB schema out of date | Migrations run automatically on every restart |
-
----
-
-## Local development (no HTTPS needed)
-
-```bash
-# Just use the base compose file — no Traefik, port 3000 exposed directly
-docker compose up -d --build
-# Visit http://localhost:3000
-```
+| SSL cert not issued | Check DNS A record is set and matches `DOMAIN` in `.env.local` |
+| 502 Bad Gateway | Service still starting — wait 30s, check `docker compose logs SERVICE` |
+| Port 80/443 in use | Another process is running: `ss -tlnp \| grep ':80\|:443'` |
+| Postgres won't start | Check `docker logs vps-postgres` — often a password/volume issue |
+| n8n can't connect to DB | Confirm `n8n` database exists: `docker exec vps-postgres psql -U postgres -l` |
+| Ollama model download stuck | Run manually: `docker exec vps-ollama ollama pull MODEL` |
+| Nginx 404 on new site | Check `sites/SITE.conf` server_name matches hostname, reload nginx |

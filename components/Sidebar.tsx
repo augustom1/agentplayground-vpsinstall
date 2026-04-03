@@ -14,6 +14,8 @@ import {
   PanelLeftClose,
   PanelLeft,
   Users,
+  Wrench,
+  CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSession } from "next-auth/react";
@@ -23,8 +25,10 @@ const navItems = [
   { href: "/dashboard",  label: "Dashboard", icon: LayoutDashboard },
   { href: "/agent-lab",  label: "Agent Lab",  icon: FlaskConical    },
   { href: "/chat",       label: "Chat",       icon: MessageSquare   },
+  { href: "/tools",      label: "Tools",      icon: Wrench          },
   { href: "/schedule",   label: "Schedule",   icon: Calendar        },
   { href: "/files",      label: "Files",      icon: FolderOpen      },
+  { href: "/billing",   label: "Billing",    icon: CreditCard      },
 ];
 
 export function Sidebar() {
@@ -49,17 +53,18 @@ export function Sidebar() {
           <div
             className="flex items-center justify-center shrink-0"
             style={{
-              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-              borderRadius: "10px",
+              background: "var(--color-surface-3)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "8px",
               width: "32px",
               height: "32px",
             }}
           >
-            <Bot size={16} color="white" />
+            <Bot size={16} color="var(--color-text)" />
           </div>
           {!collapsed && (
             <span className="font-semibold text-sm animate-fade-in" style={{ color: "var(--color-text)" }}>
-              Agent HQ
+              Playground
             </span>
           )}
         </div>
@@ -94,7 +99,7 @@ export function Sidebar() {
                 collapsed ? "px-0 py-2.5 justify-center" : "px-3 py-2.5",
                 "rounded-lg hover:bg-white/[0.04]"
               )}
-              style={{ color: active ? "#a5b4fc" : "var(--color-muted)" }}
+              style={{ color: active ? "var(--color-text)" : "var(--color-muted)" }}
             >
               {active && (
                 <span
@@ -122,7 +127,7 @@ export function Sidebar() {
               collapsed ? "px-0 py-2.5 justify-center" : "px-3 py-2.5",
               "rounded-lg hover:bg-white/[0.04]"
             )}
-            style={{ color: pathname.startsWith("/users") ? "#a5b4fc" : "var(--color-muted)" }}
+            style={{ color: pathname.startsWith("/users") ? "var(--color-text)" : "var(--color-muted)" }}
           >
             {pathname.startsWith("/users") && (
               <span
@@ -149,7 +154,7 @@ export function Sidebar() {
             "flex items-center gap-3 text-sm font-medium rounded-lg hover:bg-white/[0.04] transition-colors",
             collapsed ? "px-0 py-2.5 justify-center" : "px-3 py-2.5"
           )}
-          style={{ color: pathname === "/settings" ? "#a5b4fc" : "var(--color-muted)" }}
+          style={{ color: pathname === "/settings" ? "var(--color-text)" : "var(--color-muted)" }}
         >
           <Settings size={16} className="shrink-0" />
           {!collapsed && <span>Settings</span>}

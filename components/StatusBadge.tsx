@@ -4,7 +4,7 @@ const config: Record<AgentStatus, { label: string; bg: string; dot: string }> = 
   healthy: { label: "Healthy", bg: "var(--color-green-dim)", dot: "var(--color-green)" },
   idle: { label: "Idle", bg: "var(--color-yellow-dim)", dot: "var(--color-yellow)" },
   error: { label: "Error", bg: "var(--color-red-dim)", dot: "var(--color-red)" },
-  deploying: { label: "Deploying", bg: "rgba(99,102,241,0.12)", dot: "#818cf8" },
+  deploying: { label: "Deploying", bg: "rgba(255,255,255,0.08)", dot: "var(--color-text-secondary)" },
 };
 
 export function StatusBadge({ status }: { status: string }) {

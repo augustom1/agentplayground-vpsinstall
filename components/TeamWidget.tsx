@@ -2,7 +2,7 @@ import type { Widget, StatData, CalendarData } from "@/lib/widgets";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 const teamAccent: Record<string, string> = {
-  marketing: "#6366f1",
+  marketing: "var(--color-accent)",
   accounting: "var(--color-green)",
   messaging: "var(--color-yellow)",
   "website-builder": "var(--color-red)",
@@ -10,7 +10,7 @@ const teamAccent: Record<string, string> = {
 
 function StatWidget({ widget }: { widget: Widget }) {
   const data = widget.data as StatData;
-  const color = teamAccent[widget.teamId] || "#6366f1";
+  const color = teamAccent[widget.teamId] || "var(--color-accent)";
 
   return (
     <div className="glass-card p-3 flex flex-col gap-1">
@@ -39,7 +39,7 @@ function StatWidget({ widget }: { widget: Widget }) {
 
 function CalendarWidget({ widget }: { widget: Widget }) {
   const data = widget.data as CalendarData;
-  const color = teamAccent[widget.teamId] || "#6366f1";
+  const color = teamAccent[widget.teamId] || "var(--color-accent)";
   const dayLabels = ["M", "T", "W", "T", "F", "S", "S"];
 
   return (

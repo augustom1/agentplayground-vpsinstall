@@ -19,14 +19,14 @@ type AppUser = {
 };
 
 const ROLE_COLORS: Record<string, { bg: string; text: string; icon: React.ComponentType<{ size?: number }> }> = {
-  admin:  { bg: "rgba(99,102,241,0.1)",  text: "#a5b4fc", icon: ShieldCheck },
+  admin:  { bg: "rgba(255,255,255,0.08)",  text: "var(--color-text)", icon: ShieldCheck },
   user:   { bg: "var(--color-green-dim)", text: "var(--color-green)", icon: UserIcon },
   viewer: { bg: "rgba(100,116,139,0.1)", text: "var(--color-muted)", icon: Eye },
 };
 
 const PLAN_COLORS: Record<string, { bg: string; text: string }> = {
   enterprise: { bg: "rgba(251,191,36,0.1)", text: "var(--color-yellow)" },
-  pro:        { bg: "rgba(99,102,241,0.1)", text: "#a5b4fc" },
+  pro:        { bg: "rgba(255,255,255,0.08)", text: "var(--color-text)" },
   free:       { bg: "rgba(100,116,139,0.1)", text: "var(--color-muted)" },
 };
 
@@ -147,7 +147,7 @@ export default function UsersPage() {
 
         {loading && (
           <div className="flex items-center justify-center py-12">
-            <Loader2 size={20} className="animate-spin" style={{ color: "#818cf8" }} />
+            <Loader2 size={20} className="animate-spin" style={{ color: "var(--color-text-secondary)" }} />
           </div>
         )}
 
@@ -171,7 +171,7 @@ export default function UsersPage() {
               style={{
                 gridTemplateColumns: "1fr 100px 100px 80px 100px",
                 borderBottom: i < users.length - 1 ? "1px solid var(--color-border)" : undefined,
-                background: isEditing ? "rgba(99,102,241,0.03)" : "transparent",
+                background: isEditing ? "rgba(255,255,255,0.08)" : "transparent",
               }}
             >
               {/* Identity */}

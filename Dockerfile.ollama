@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────
+# Ollama — Custom image with auto-pull entrypoint
+#
+# Models are NOT baked into this image. Instead they are pulled
+# on first start into the persistent volume (ollamadata).
+# Subsequent starts are instant — Ollama skips already-present models.
+#
+# Default models (override via OLLAMA_AUTO_PULL env var):
+#   qwen2.5:3b  ~1.9 GB — fast, structured tasks, coding, automation
+#   qwen2.5:7b  ~4.4 GB — complex reasoning, same family = consistent prompting
+# ─────────────────────────────────────────────────────────────────
+FROM ollama/ollama:latest
+
+# Space-separated list of models to ensure are present on every start.
+# ollama pull is idempotent — already-present models are verified in seconds.
+ENV OLLAMA_AUTO_PULL="qwen2.5:3b qwen2.5:7b"
+
+COPY ollama-entrypoint.sh /ollama-entrypoint.sh
+RUN chmod +x /ollama-entrypoint.sh
+
+ENTRYPOINT ["/ollama-entrypoint.sh"]

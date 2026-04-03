@@ -59,7 +59,7 @@ export default function SetupPage() {
   if (checking) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--color-background)" }}>
-        <Loader2 size={24} className="animate-spin" style={{ color: "#818cf8" }} />
+        <Loader2 size={24} className="animate-spin" style={{ color: "var(--color-text-secondary)" }} />
       </div>
     );
   }
@@ -75,7 +75,7 @@ export default function SetupPage() {
           <div
             className="flex items-center justify-center mb-3"
             style={{
-              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+              background: "linear-gradient(135deg, var(--color-accent), var(--color-text-secondary))",
               borderRadius: "16px",
               width: "52px",
               height: "52px",
@@ -84,7 +84,7 @@ export default function SetupPage() {
             <Bot size={24} color="white" />
           </div>
           <h1 className="text-xl font-semibold" style={{ color: "var(--color-text)" }}>
-            Welcome to Agent HQ
+            Welcome to Playground
           </h1>
           <p className="text-sm mt-1 text-center" style={{ color: "var(--color-muted)", maxWidth: "260px" }}>
             Create your admin account to get started. This screen appears only once.

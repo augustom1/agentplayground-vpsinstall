@@ -55,7 +55,7 @@ function LoginForm() {
           <div
             className="flex items-center justify-center mb-3"
             style={{
-              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+              background: "linear-gradient(135deg, var(--color-accent), var(--color-text-secondary))",
               borderRadius: "16px",
               width: "52px",
               height: "52px",
@@ -64,7 +64,7 @@ function LoginForm() {
             <Bot size={24} color="white" />
           </div>
           <h1 className="text-xl font-semibold" style={{ color: "var(--color-text)" }}>
-            Agent HQ
+            Playground
           </h1>
           <p className="text-sm mt-1" style={{ color: "var(--color-muted)" }}>
             Sign in to your account

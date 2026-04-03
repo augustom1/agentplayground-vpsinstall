@@ -39,7 +39,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const colorMap: Record<ToastType, { bg: string; border: string; text: string }> = {
     success: { bg: "var(--color-green-dim)", border: "rgba(52,211,153,0.25)", text: "var(--color-green)" },
     error: { bg: "var(--color-red-dim)", border: "rgba(248,113,113,0.25)", text: "var(--color-red)" },
-    info: { bg: "rgba(99,102,241,0.1)", border: "rgba(99,102,241,0.25)", text: "#a5b4fc" },
+    info: { bg: "rgba(255,255,255,0.08)", border: "rgba(255,255,255,0.08)", text: "var(--color-text)" },
   };
 
   return (

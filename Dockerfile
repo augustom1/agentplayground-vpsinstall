@@ -29,17 +29,37 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ── Stage 3: Production runner ─────────────
-FROM node:20-alpine AS runner
+# node:20-slim (Debian) is required — Ollama needs glibc (not available on Alpine)
+FROM node:20-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
+# Store Ollama models inside /app so we control ownership
+ENV OLLAMA_MODELS=/app/.ollama/models
+
+# Install Ollama
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pre-pull llama3.2:3b (~2 GB) so the model is baked into the image.
+# ollama serve runs in the background during this RUN layer only.
+RUN mkdir -p /app/.ollama/models && \
+    ollama serve & \
+    sleep 15 && \
+    ollama pull llama3.2:3b && \
+    kill %1 || true
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
     adduser  --system --uid 1001 nextjs
+
+# Hand model ownership to the app user
+RUN chown -R nextjs:nodejs /app/.ollama
 
 # Copy standalone output + static assets
 COPY --from=builder /app/public ./public
@@ -59,5 +79,6 @@ RUN chmod +x ./entrypoint.sh
 USER nextjs
 
 EXPOSE 3000
+EXPOSE 11434
 
 ENTRYPOINT ["./entrypoint.sh"]

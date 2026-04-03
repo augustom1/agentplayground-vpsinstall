@@ -15,9 +15,28 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  Wrench,
+  CheckCircle2,
 } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useToast } from "@/components/ToastProvider";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 /* ─── Types ─── */
 interface DashboardWidget {
@@ -35,6 +54,7 @@ interface MetricsData {
   upcomingJobs: Array<{ id: string; title: string; scheduledFor: string; teamName: string; recurring: string }>;
   recentRuns: Array<{ id: string; target: string; prompt: string; result: string; createdAt: string }>;
   teams: Array<{ id: string; name: string; status: string; tasksCompleted: number; lastActivity: string; description: string }>;
+  optimization?: { totalSkills: number; totalCliFunctions: number; appliedImprovements: number; totalImprovements: number };
 }
 
 const WIDGET_CATALOG = [
@@ -42,6 +62,7 @@ const WIDGET_CATALOG = [
   { type: "recent-activity", title: "Recent Activity", icon: "activity", size: "md" as const, description: "Latest actions from your agents" },
   { type: "tasks-overview", title: "Tasks Overview", icon: "bar-chart", size: "sm" as const, description: "Summary of completed and pending tasks" },
   { type: "upcoming-schedule", title: "Upcoming Schedule", icon: "calendar", size: "md" as const, description: "Next scheduled jobs at a glance" },
+  { type: "optimization", title: "Optimization", icon: "wrench", size: "sm" as const, description: "Tools generated, improvements logged, flywheel metrics" },
   { type: "performance", title: "Performance", icon: "trending-up", size: "sm" as const, description: "Agent response times and throughput" },
   { type: "run-history", title: "Recent Runs", icon: "clock", size: "lg" as const, description: "Your latest playground runs" },
 ];
@@ -53,6 +74,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; style?: React
   calendar: Calendar,
   clock: Clock,
   "trending-up": TrendingUp,
+  wrench: Wrench,
 };
 
 /* ─── Widget Content ─── */
@@ -83,7 +105,7 @@ function WidgetContent({ widget, metrics }: { widget: DashboardWidget; metrics: 
         {metrics.teams.slice(0, 5).map((team) => (
           <div key={team.id} className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Zap size={12} style={{ color: "#818cf8" }} />
+              <Zap size={12} style={{ color: "var(--color-text-secondary)" }} />
               <span className="text-[13px]" style={{ color: "var(--color-text)" }}>{team.name}</span>
             </div>
             <StatusBadge status={team.status} />
@@ -105,7 +127,7 @@ function WidgetContent({ widget, metrics }: { widget: DashboardWidget; metrics: 
       <div className="flex flex-col gap-2">
         {metrics.recentActivity.slice(0, 5).map((log) => (
           <div key={log.id} className="flex items-start gap-2">
-            <Activity size={11} style={{ color: "#818cf8", marginTop: "2px", flexShrink: 0 }} />
+            <Activity size={11} style={{ color: "var(--color-text-secondary)", marginTop: "2px", flexShrink: 0 }} />
             <div>
               <p className="text-[12px] leading-snug" style={{ color: "var(--color-text)" }}>{log.action}</p>
               {log.teamName && (
@@ -122,7 +144,7 @@ function WidgetContent({ widget, metrics }: { widget: DashboardWidget; metrics: 
     const statuses = ["pending", "running", "completed", "failed"];
     const colors: Record<string, string> = {
       pending: "var(--color-muted)",
-      running: "#818cf8",
+      running: "var(--color-text-secondary)",
       completed: "var(--color-green)",
       failed: "var(--color-red)",
     };
@@ -179,7 +201,7 @@ function WidgetContent({ widget, metrics }: { widget: DashboardWidget; metrics: 
           const timeStr = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
           return (
             <div key={job.id} className="flex items-center gap-2">
-              <Calendar size={11} style={{ color: "#818cf8", flexShrink: 0 }} />
+              <Calendar size={11} style={{ color: "var(--color-text-secondary)", flexShrink: 0 }} />
               <div className="flex-1 min-w-0">
                 <p className="text-[12px] truncate" style={{ color: "var(--color-text)" }}>{job.title}</p>
                 <p className="text-[10px]" style={{ color: "var(--color-muted)" }}>{job.teamName} · {dateStr} {timeStr}</p>
@@ -205,10 +227,10 @@ function WidgetContent({ widget, metrics }: { widget: DashboardWidget; metrics: 
           <div
             key={run.id}
             className="px-3 py-2 rounded-lg"
-            style={{ background: "rgba(18,18,31,0.5)" }}
+            style={{ background: "var(--color-surface-3)" }}
           >
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-[11px] font-medium" style={{ color: "#a5b4fc" }}>{run.target}</span>
+              <span className="text-[11px] font-medium" style={{ color: "var(--color-text)" }}>{run.target}</span>
               <span className="text-[10px]" style={{ color: "var(--color-muted)" }}>
                 {new Date(run.createdAt).toLocaleDateString()}
               </span>
@@ -220,14 +242,116 @@ function WidgetContent({ widget, metrics }: { widget: DashboardWidget; metrics: 
     );
   }
 
+  if (widget.type === "optimization") {
+    const opt = metrics.optimization;
+    if (!opt) {
+      return (
+        <p className="text-[12px] text-center py-4" style={{ color: "var(--color-muted)" }}>
+          No optimization data yet
+        </p>
+      );
+    }
+    const rows = [
+      { label: "Skills in catalog", value: opt.totalSkills, icon: Wrench, color: "#a78bfa" },
+      { label: "CLI functions", value: opt.totalCliFunctions, icon: Zap, color: "#60a5fa" },
+      { label: "Improvements applied", value: opt.appliedImprovements, icon: CheckCircle2, color: "var(--color-green)" },
+      { label: "Total improvements", value: opt.totalImprovements, icon: TrendingUp, color: "var(--color-yellow)" },
+    ];
+    return (
+      <div className="flex flex-col gap-2">
+        {rows.map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Icon size={11} style={{ color }} />
+              <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>{label}</span>
+            </div>
+            <span className="text-[13px] font-mono font-semibold" style={{ color: "var(--color-text)" }}>{value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   // Performance and unknown types — placeholder
   const Icon = iconMap[widget.icon] || Zap;
   return (
     <div className="flex flex-col items-center justify-center py-6 gap-2" style={{ opacity: 0.5 }}>
-      <Icon size={20} style={{ color: "#818cf8" }} />
+      <Icon size={20} style={{ color: "var(--color-text-secondary)" }} />
       <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
         Connect a data source to populate
       </p>
+    </div>
+  );
+}
+
+/* ─── Sortable Widget Wrapper ─── */
+function SortableWidget({
+  widget,
+  metrics,
+  onRemove,
+}: {
+  widget: DashboardWidget;
+  metrics: MetricsData | null;
+  onRemove: (id: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: widget.id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  const colSpan =
+    widget.size === "lg" ? "md:col-span-2 lg:col-span-3" :
+    widget.size === "md" ? "md:col-span-1 lg:col-span-2" : "";
+  const Icon = iconMap[widget.icon] || Zap;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`glass-card p-4 group relative ${colSpan}`}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <GripVertical
+            size={14}
+            style={{ color: "var(--color-muted)", opacity: 0, cursor: "grab" }}
+            className="group-hover:!opacity-40 transition-opacity"
+            {...attributes}
+            {...listeners}
+          />
+          <div
+            className="flex items-center justify-center w-6 h-6"
+            style={{ background: "var(--color-surface-3)", borderRadius: "6px" }}
+          >
+            <Icon size={12} style={{ color: "var(--color-text-secondary)" }} />
+          </div>
+          <h3
+            className="text-xs font-semibold uppercase tracking-wider"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            {widget.title}
+          </h3>
+        </div>
+        <button
+          onClick={() => onRemove(widget.id)}
+          className="opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--color-muted)", padding: "2px" }}
+        >
+          <X size={13} />
+        </button>
+      </div>
+      <WidgetContent widget={widget} metrics={metrics} />
     </div>
   );
 }
@@ -240,6 +364,33 @@ export default function DashboardPage() {
   const [metricsError, setMetricsError] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const metricsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setWidgets((prev) => {
+      const oldIndex = prev.findIndex((w) => w.id === active.id);
+      const newIndex = prev.findIndex((w) => w.id === over.id);
+      const reordered = arrayMove(prev, oldIndex, newIndex);
+
+      // Persist new positions (fire-and-forget)
+      reordered.forEach((w, i) => {
+        fetch(`/api/widgets/${w.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position: i }),
+        }).catch(() => {});
+      });
+
+      return reordered;
+    });
+  }, []);
 
   // Load widgets from DB
   useEffect(() => {
@@ -381,18 +532,18 @@ export default function DashboardPage() {
         <div
           className="flex flex-col items-center justify-center py-20 rounded-2xl"
           style={{
-            background: "linear-gradient(135deg, rgba(12,12,24,0.6), rgba(18,18,31,0.4))",
+            background: "var(--color-surface-2)",
             border: "1px dashed var(--color-border)",
           }}
         >
           <div
             className="flex items-center justify-center w-16 h-16 mb-4"
             style={{
-              background: "linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1))",
+              background: "var(--color-surface-3)",
               borderRadius: "16px",
             }}
           >
-            <LayoutGrid size={28} style={{ color: "#818cf8", opacity: 0.6 }} />
+            <LayoutGrid size={28} style={{ color: "var(--color-text-secondary)", opacity: 0.6 }} />
           </div>
           <h2 className="text-base font-semibold mb-1" style={{ color: "var(--color-text)" }}>
             Your dashboard is empty
@@ -413,70 +564,38 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Widget Grid */}
+      {/* Widget Grid — drag-and-drop enabled */}
       {!widgetsLoading && !isEmpty && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {widgets.map((widget) => {
-            const colSpan =
-              widget.size === "lg" ? "md:col-span-2 lg:col-span-3" :
-              widget.size === "md" ? "md:col-span-1 lg:col-span-2" : "";
-            const Icon = iconMap[widget.icon] || Zap;
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={widgets.map((w) => w.id)} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {widgets.map((widget) => (
+                <SortableWidget
+                  key={widget.id}
+                  widget={widget}
+                  metrics={metrics}
+                  onRemove={removeWidget}
+                />
+              ))}
 
-            return (
-              <div key={widget.id} className={`glass-card p-4 group relative ${colSpan}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <GripVertical
-                      size={14}
-                      style={{ color: "var(--color-muted)", opacity: 0, cursor: "grab" }}
-                      className="group-hover:!opacity-40 transition-opacity"
-                    />
-                    <div
-                      className="flex items-center justify-center w-6 h-6"
-                      style={{ background: "rgba(99,102,241,0.1)", borderRadius: "6px" }}
-                    >
-                      <Icon size={12} style={{ color: "#818cf8" }} />
-                    </div>
-                    <h3
-                      className="text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: "var(--color-text-secondary)" }}
-                    >
-                      {widget.title}
-                    </h3>
-                  </div>
-                  <button
-                    onClick={() => removeWidget(widget.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      color: "var(--color-muted)",
-                      padding: "4px",
-                      borderRadius: "6px",
-                    }}
-                    title="Remove widget"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-                <WidgetContent widget={widget} metrics={metrics} />
-              </div>
-            );
-          })}
-
-          {/* Add more widget tile */}
-          <button
-            onClick={() => setShowPicker(true)}
-            className="flex flex-col items-center justify-center gap-2 p-5 rounded-[14px] transition-all duration-200 cursor-pointer hover:bg-white/[0.02]"
-            style={{ border: "1px dashed var(--color-border)", background: "transparent", minHeight: "120px" }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(99,102,241,0.3)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)"; }}
-          >
-            <Plus size={18} style={{ color: "#818cf8", opacity: 0.5 }} />
-            <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>Add widget</span>
-          </button>
-        </div>
+              {/* Add more widget tile */}
+              <button
+                onClick={() => setShowPicker(true)}
+                className="flex flex-col items-center justify-center gap-2 p-5 rounded-[14px] transition-all duration-200 cursor-pointer hover:bg-white/[0.02]"
+                style={{ border: "1px dashed var(--color-border)", background: "transparent", minHeight: "120px" }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border-light)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)"; }}
+              >
+                <Plus size={18} style={{ color: "var(--color-text-secondary)", opacity: 0.5 }} />
+                <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>Add widget</span>
+              </button>
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       {/* Widget Picker Modal */}
@@ -519,11 +638,11 @@ export default function DashboardPage() {
                     <div
                       className="flex items-center justify-center w-9 h-9 shrink-0"
                       style={{
-                        background: "linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.12))",
+                        background: "var(--color-surface-3)",
                         borderRadius: "10px",
                       }}
                     >
-                      <Icon size={16} style={{ color: "#818cf8" }} />
+                      <Icon size={16} style={{ color: "var(--color-text-secondary)" }} />
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>{catalog.title}</p>

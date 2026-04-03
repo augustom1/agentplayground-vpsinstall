@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-error";
 // GET /api/metrics — aggregated dashboard data
 export async function GET() {
   try {
-    const [teamCount, taskStatusGroups, recentActivity, upcomingJobs, recentRuns, teams] =
+    const [teamCount, taskStatusGroups, recentActivity, upcomingJobs, recentRuns, teams, skillCount, cliFnCount, improvementCounts] =
       await Promise.all([
         prisma.agentTeam.count({ where: { isSystemTeam: false } }),
         prisma.task.groupBy({ by: ["status"], _count: { status: true } }),
@@ -34,11 +34,17 @@ export async function GET() {
           },
           take: 20,
         }),
+        prisma.skill.count(),
+        prisma.cliFunction.count(),
+        prisma.improvement.groupBy({ by: ["applied"], _count: { applied: true } }),
       ]);
 
     const taskCounts = Object.fromEntries(
       taskStatusGroups.map((g) => [g.status, g._count.status])
     );
+
+    const totalImprovements = improvementCounts.reduce((sum, g) => sum + g._count.applied, 0);
+    const appliedImprovements = improvementCounts.find((g) => g.applied)?._count.applied ?? 0;
 
     return NextResponse.json({
       teamCount,
@@ -47,6 +53,12 @@ export async function GET() {
       upcomingJobs,
       recentRuns,
       teams,
+      optimization: {
+        totalSkills: skillCount,
+        totalCliFunctions: cliFnCount,
+        totalImprovements,
+        appliedImprovements,
+      },
     });
   } catch (err) {
     return apiError(err);

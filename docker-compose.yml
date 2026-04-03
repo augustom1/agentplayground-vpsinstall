@@ -1,42 +1,65 @@
-# ─────────────────────────────────────────────
-# Agent Dashboard — Docker Compose (Full Stack)
-# ─────────────────────────────────────────────
-# Includes: Next.js app + PostgreSQL w/ pgvector + cron executor
+# ─────────────────────────────────────────────────────────────────
+# VPS Master Stack — Full Service Compose File
+# ─────────────────────────────────────────────────────────────────
 #
-# Quick start:
+# Services:
+#   Infrastructure : PostgreSQL (shared) · Redis
+#   Your Products  : Agent Dashboard · Cron Executor
+#   Automation     : n8n
+#   AI             : Ollama (local LLMs via vps-ollama)
+#   Web Hosting    : Nginx (static sites)
+#   Management     : Portainer · FileBrowser
+#
+# Dev (no HTTPS):
 #   docker compose up -d --build
 #
-# With env file:
-#   docker compose --env-file .env.local up -d --build
-# ─────────────────────────────────────────────
+# Production (with HTTPS + Traefik):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# ─────────────────────────────────────────────────────────────────
 
 services:
-  # ── PostgreSQL + pgvector ──────────────────
+
+  # ── PostgreSQL + pgvector (shared across all services) ──────────
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: agent-dashboard-db
+    container_name: vps-postgres
     restart: unless-stopped
     ports:
       - "${DB_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-agent_dashboard}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
-  # ── Next.js Dashboard ─────────────────────
+  # ── Redis (cache + queues) ─────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: vps-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secret}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Agent Dashboard (Next.js) ──────────────────────────────────
   dashboard:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: agent-dashboard
+    container_name: vps-dashboard
     restart: unless-stopped
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
@@ -45,7 +68,8 @@ services:
     environment:
       - NODE_ENV=production
       - HOSTNAME=0.0.0.0
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agent_dashboard}?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_dashboard}?schema=public
+      - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,12 +80,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
-  # ── Cron Executor (recurring tasks) ───────
+  # ── Cron Executor (recurring tasks) ───────────────────────────
   cron:
     image: alpine:3.19
-    container_name: agent-dashboard-cron
+    container_name: vps-cron
     restart: unless-stopped
     depends_on:
       dashboard:
@@ -71,25 +95,119 @@ services:
     command: >
       sh -c "echo '* * * * * wget -qO- --header=\"Authorization: Bearer $$CRON_SECRET\" http://dashboard:3000/api/cron > /dev/null 2>&1' | crontab - && crond -f -l 8"
 
-  # ── FileBrowser (open source file manager) ──
-  filebrowser:
-    image: filebrowser/filebrowser:latest
-    container_name: agent-dashboard-files
+  # ── n8n (workflow automation) ──────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: vps-n8n
     restart: unless-stopped
     ports:
-      - "${FILEBROWSER_PORT:-8080}:80"
-    volumes:
-      - filedata:/srv
+      - "${N8N_PORT:-5678}:5678"
     environment:
-      - FB_NOAUTH=true
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - WEBHOOK_URL=${N8N_PROTOCOL:-http}://${N8N_HOST:-localhost}:${N8N_PORT:-5678}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-postgres}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - EXECUTIONS_MODE=regular
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?N8N_BASIC_AUTH_PASSWORD is required}
+      # Allow n8n to call your dashboard's internal API
+      - NODE_FUNCTION_ALLOW_EXTERNAL=*
+    volumes:
+      - n8ndata:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Ollama (local LLM backend) ────────────────────────────────
+  # Uses a custom image that auto-pulls qwen2.5:3b + qwen2.5:7b on first start.
+  # Models are stored in the ollamadata volume — downloaded once, persist forever.
+  # To add/change models: set OLLAMA_AUTO_PULL in the environment block below.
+  ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama
+    container_name: vps-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      # Space-separated list — pulled automatically on every start (no-op if present)
+      - OLLAMA_AUTO_PULL=${OLLAMA_AUTO_PULL:-qwen2.5:3b qwen2.5:7b}
+    volumes:
+      - ollamadata:/root/.ollama
+    # ── GPU support (uncomment if your server has an NVIDIA GPU) ────
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # ── Nginx (static website hosting for clients) ────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: vps-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8082}:80"
+    volumes:
+      - ./sites:/etc/nginx/conf.d:ro
+      - ./webroot:/var/www:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+  # ── FileBrowser (file management UI) ─────────────────────────
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: vps-filebrowser
+    restart: unless-stopped
+    ports:
+      - "${FILEBROWSER_PORT:-8083}:80"
+    volumes:
+      - filedata:/srv/files
+      - ./webroot:/srv/webroot
+    environment:
+      - FB_NOAUTH=${FB_NOAUTH:-false}
+
+  # ── Portainer (Docker management UI) ─────────────────────────
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: vps-portainer
+    restart: unless-stopped
+    ports:
+      - "${PORTAINER_PORT:-9000}:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainerdata:/data
+
 volumes:
   pgdata:
-    driver: local
+  redisdata:
   filedata:
-    driver: local
+  n8ndata:
+  ollamadata:
+  portainerdata:

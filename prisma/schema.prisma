@@ -29,6 +29,11 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── Billing relations (inactive — ready to wire up) ───────────
+  apiUsage  ApiUsage[]
+  credits   UserCredits?
+  invoices  Invoice[]
+
   @@map("users")
 }
 
@@ -63,6 +68,8 @@ model AgentTeam {
   widgets       Widget[]
   activityLogs  ActivityLog[]
 
+  @@index([status])
+  @@index([createdAt])
   @@map("agent_teams")
 }
 
@@ -106,6 +113,9 @@ model Task {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  @@index([teamId])
+  @@index([status])
+  @@index([createdAt])
   @@map("tasks")
 }
 
@@ -128,6 +138,8 @@ model RecurringTask {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  @@index([teamId])
+  @@index([enabled, nextRunAt])
   @@map("recurring_tasks")
 }
 
@@ -149,6 +161,9 @@ model ScheduledJob {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([teamId])
+  @@index([status])
+  @@index([scheduledFor])
   @@map("scheduled_jobs")
 }
 
@@ -241,6 +256,9 @@ model ActivityLog {
 
   createdAt DateTime @default(now())
 
+  @@index([teamId])
+  @@index([type])
+  @@index([createdAt])
   @@map("activity_logs")
 }
 
@@ -301,17 +319,135 @@ model AgentTeamConfig {
   @@map("agent_team_configs")
 }
 
+// ─── File Management ─────────────────────────────────
+// Tracks files stored in the /app/data/files/ volume.
+// The path is relative to that base directory.
+
+model FileRecord {
+  id          String   @id @default(cuid())
+  name        String                         // filename (basename)
+  path        String   @unique               // relative path, e.g. "reports/q1.pdf"
+  size        Int      @default(0)           // bytes
+  mimeType    String?                        // detected MIME type
+  isDirectory Boolean  @default(false)
+  embedded    Boolean  @default(false)       // true once indexed into FileEmbedding
+  description String?  @db.Text             // optional agent-written description
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([path])
+  @@index([embedded])
+  @@map("file_records")
+}
+
+// Vector embeddings for file contents — 768-dim (nomic-embed-text via Ollama, free/local)
+model FileEmbedding {
+  id         String                   @id @default(cuid())
+  filePath   String                   // matches FileRecord.path
+  chunkIndex Int      @default(0)     // chunk number (files split into 512-token chunks)
+  content    String   @db.Text        // the chunk text
+  vector     Unsupported("vector(768)")  // nomic-embed-text output dim
+
+  createdAt DateTime @default(now())
+
+  @@index([filePath])
+  @@map("file_embeddings")
+}
+
 // ─── Vector Embeddings (pgvector) ────────────────────
+// General-purpose embeddings for agent/task/skill memory.
+// Uses 1536-dim for OpenAI ada-002 compatibility.
+// For local/free: use FileEmbedding (768-dim, nomic-embed-text).
 
 model Embedding {
   id        String                   @id @default(cuid())
   content   String                   @db.Text   // the original text
   vector    Unsupported("vector(1536)")          // 1536-dim for OpenAI ada-002 compatible
   metadata  Json?                    // source info, tags, etc.
-  sourceType String                  // agent | task | skill | improvement | knowledge
+  sourceType String                  // agent | task | skill | improvement | knowledge | file
   sourceId   String                  // ID of the source record
 
   createdAt DateTime @default(now())
 
   @@map("embeddings")
+}
+
+// ─── Billing Foundation ───────────────────────────────
+// STATUS: SCHEMA ONLY — not enforced yet.
+// To activate: wire trackUsage() into API routes, enforce PLAN_LIMITS in middleware,
+// and connect a payment processor (Stripe recommended) to UserCredits.
+// See lib/pricing.ts for the full pricing config.
+
+// Every API call that consumes resources. Written now (cost = 0), priced later.
+model ApiUsage {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  service     String   // "claude" | "ollama" | "web_search" | "web_browse" | "compute"
+  endpoint    String?  // specific model or API endpoint
+  inputUnits  Float    @default(0)  // input tokens (Claude) or 0
+  outputUnits Float    @default(0)  // output tokens (Claude) or 0
+  units       Float    @default(1)  // API calls, compute minutes, etc.
+  unitType    String   @default("calls") // "tokens" | "calls" | "minutes"
+  credits     Float    @default(0)  // cost in credits (0 until billing is live)
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("api_usage")
+}
+
+// One row per user — their credit wallet.
+model UserCredits {
+  id                String @id @default(cuid())
+  userId            String @unique
+  user              User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance           Float  @default(0)   // spendable credits right now
+  lifetimePurchased Float  @default(0)   // all-time purchased
+  lifetimeUsed      Float  @default(0)   // all-time consumed
+  updatedAt         DateTime @updatedAt
+
+  @@map("user_credits")
+}
+
+// Monthly invoice generated on the 1st of each month.
+model Invoice {
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  periodStart  DateTime
+  periodEnd    DateTime
+  status       String            @default("draft") // draft | sent | paid | overdue | void
+  totalCredits Float             @default(0)
+  totalUsd     Float             @default(0)
+  dueAt        DateTime
+  paidAt       DateTime?
+
+  lineItems InvoiceLineItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("invoices")
+}
+
+// One row per service per invoice.
+model InvoiceLineItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  service     String   // "Claude API" | "Web Search" | "Compute" etc.
+  description String
+  quantity    Float
+  unitType    String
+  credits     Float
+  usdAmount   Float
+
+  createdAt DateTime @default(now())
+
+  @@map("invoice_line_items")
 }

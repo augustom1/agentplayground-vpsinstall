@@ -1,109 +1,463 @@
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { CHAT_TOOLS, executeTool } from "@/lib/chat-tools";
+import { prisma } from "@/lib/prisma";
+import { auth } from "@/auth";
+import { rateLimit, LIMITS } from "@/lib/rate-limit";
+import { trackUsage } from "@/lib/usage-tracker";
 
-const SYSTEM_PROMPT = `You are an AI operations platform assistant. You help users build, manage, and optimize their agent teams through conversation.
+// ─── System Prompts ────────────────────────────────────────────────────────────
 
-Your capabilities:
-- **Create agent teams** — Build new teams of AI agents tailored to the user's needs
-- **Create agents** — Add individual agents with specific roles, models, and capabilities to teams
-- **Register skills** — Define what skills each team can use
-- **Register CLI functions** — Set up command-line operations agents can execute
-- **Schedule tasks** — Add tasks to the calendar with optional recurrence
-- **Query data** — Look up teams, agents, tasks, skills, and activity logs
-- **List skills** — Show all available skills in the system
+const BASE_SYSTEM = `You are the AgentPlayground AI — the core intelligence of a self-improving autonomous agent platform.
+
+AgentPlayground's mission: run autonomous agents that execute tasks continuously, learn from repeated workflows, convert repetition into reusable tools, and reduce dependency on expensive external APIs over time.
+
+## The Flywheel
+Client Problem → Manual Solution → Agent System → Reusable Tool → Local Optimization → Scalable Product
+
+## Core Principles
+- **Automate over manual** — If a task is done more than once, it should become a tool
+- **Local-first** — Prefer Ollama/local models for routine tasks; reserve Claude/external APIs for complex reasoning
+- **Convert repetition to tools** — When you spot patterns, use log_improvement and generate_tool
+- **Reliability over complexity** — Simple, working tools beat complex unfinished systems
+
+## Your capabilities
+- **Create agent teams** — Build teams of AI agents tailored to specific purposes
+- **Create agents** — Add agents with specific roles, models, and capabilities
+- **Create chatbots** — Set up conversational agents for customer service, support, or any domain
+- **Register skills** — Define reusable capabilities that go into the tools catalog
+- **Register CLI functions** — Set up commands agents can execute
+- **Schedule tasks** — Add jobs to the calendar with optional recurrence
+- **Web search & browse** — Research and monitor the web
+- **Query data** — Look up any data in the system
+- **Delegate tasks** — Assign work to teams as coordinator
+- **Log improvements** — Record optimization opportunities and patterns you detect
+- **Generate tools** — Convert repeated workflows into permanent, reusable skills
 
 When a user describes what they need, proactively:
-1. Ask clarifying questions if the request is ambiguous
-2. Create the team, agents, and skills using your tools
-3. Confirm what was created and suggest next steps
+1. Ask clarifying questions only when necessary
+2. Use your tools to make it happen immediately
+3. If the task looks repetitive or could be automated, suggest converting it to a skill/tool
+4. Confirm what was created and suggest the next logical step in the flywheel
 
-You have built-in default skills: Build Agent Team, MCP Server, CLI Execute, File Management, Database Query, Schedule Task, Import/Export Teams.
+Be concise and direct. Use ✓ for successes. Format responses cleanly with markdown.`;
 
-Be concise and direct. Use ✓ for successes. Format responses cleanly with markdown.
+const COORDINATOR_INTRO = `You are the **Coordinator Agent** — the intelligent orchestration layer for all agent teams.
 
-IMPORTANT: When the user first arrives with no teams created, welcome them and ask what kind of agent teams they'd like to build. Guide them through the process.`;
+Your role:
+1. Understand the user's request and determine which team(s) can handle it best
+2. Delegate tasks to the appropriate teams using the delegate_to_team tool
+3. Coordinate multi-team workflows when needed
+4. Report status and results back to the user
+5. Use web_search and web_browse to gather information when needed
 
-export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return new Response("ANTHROPIC_API_KEY is not set. Add it to .env.local.", { status: 500 });
+When routing, clearly explain your decision: which team, why, and what they'll do.`;
+
+// ─── Context builders ──────────────────────────────────────────────────────────
+
+async function buildCoordinatorContext(): Promise<string> {
+  const teams = await prisma.agentTeam.findMany({
+    where: { isSystemTeam: false },
+    include: {
+      agents: { select: { id: true, name: true, model: true, capabilities: true, description: true } },
+      skills: { select: { name: true, category: true, description: true } },
+      _count: { select: { tasks: true } },
+    },
+    take: 20,
+  });
+
+  if (teams.length === 0) {
+    return `${COORDINATOR_INTRO}\n\nNo agent teams exist yet. Help the user create their first team.`;
   }
 
-  let messages: Array<{ role: "user" | "assistant"; content: string }>;
-  try {
-    const body = await req.json();
-    messages = body.messages ?? [];
-  } catch {
-    return new Response("Invalid JSON body", { status: 400 });
+  const teamList = teams
+    .map((t) => {
+      const agentNames = t.agents.map((a) => `${a.name} (${a.model})`).join(", ") || "no agents";
+      const skillNames = t.skills.map((s) => s.name).join(", ") || "no skills";
+      return `### ${t.name} [ID: ${t.id}]\n- Status: ${t.status} · ${t.agents.length} agents · ${t._count.tasks} tasks\n- Agents: ${agentNames}\n- Skills: ${skillNames}`;
+    })
+    .join("\n\n");
+
+  return `${COORDINATOR_INTRO}\n\n## Teams Under Your Coordination\n\n${teamList}`;
+}
+
+async function buildTeamContext(teamId: string): Promise<string> {
+  const team = await prisma.agentTeam.findUnique({
+    where: { id: teamId },
+    include: {
+      agents: true,
+      skills: true,
+      cliFunctions: true,
+    },
+  });
+
+  if (!team) return "";
+
+  const agentList =
+    team.agents
+      .map(
+        (a) =>
+          `- **${a.name}** | ${a.model} | ${a.description || "No description"} | Capabilities: ${a.capabilities.join(", ") || "none"}`
+      )
+      .join("\n") || "No agents yet.";
+
+  const skillList =
+    team.skills.map((s) => `- ${s.name} (${s.category}): ${s.description}`).join("\n") ||
+    "No skills yet.";
+
+  const cliFnList =
+    team.cliFunctions
+      .map((f) => `- ${f.name}: \`${f.command}\`${f.dangerous ? " ⚠ dangerous" : ""}`)
+      .join("\n") || "No CLI functions.";
+
+  return `You are the AI coordinator for the **${team.name}** team (ID: ${team.id}).
+
+## Team Overview
+- Runtime: ${team.language} · Port: ${team.port} · Status: ${team.status}
+- ${team.description || "No description"}
+
+## Agents
+${agentList}
+
+## Skills
+${skillList}
+
+## CLI Functions
+${cliFnList}
+
+Help the user work with this team's agents and capabilities. Use the team ID above when calling tools that modify this team.`;
+}
+
+// ─── Provider streaming functions ─────────────────────────────────────────────
+
+async function streamAnthropic(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  model: string,
+  systemPrompt: string,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder
+) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    controller.enqueue(
+      encoder.encode("ANTHROPIC_API_KEY is not set. Add it to .env.local.")
+    );
+    return;
   }
 
   const client = new Anthropic({ apiKey });
-  const encoder = new TextEncoder();
-
-  // Convert tool definitions for Anthropic API
   const tools = CHAT_TOOLS.map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.input_schema,
   }));
 
+  let currentMessages = [...messages];
+  let continueLoop = true;
+  let iterations = 0;
+  const MAX_TOOL_ITERATIONS = 10;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  try {
+    while (continueLoop && iterations < MAX_TOOL_ITERATIONS) {
+      iterations++;
+      const response = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: currentMessages,
+        tools: tools as Anthropic.Messages.Tool[],
+      });
+
+      totalInputTokens += response.usage?.input_tokens ?? 0;
+      totalOutputTokens += response.usage?.output_tokens ?? 0;
+      continueLoop = false;
+
+      for (const block of response.content) {
+        if (block.type === "text") {
+          controller.enqueue(encoder.encode(block.text));
+        } else if (block.type === "tool_use") {
+          const result = await executeTool(block.name, block.input as Record<string, unknown>);
+          controller.enqueue(encoder.encode(`\n\n⚡ *Used tool: ${block.name}*\n\n`));
+
+          currentMessages = [
+            ...currentMessages,
+            { role: "assistant" as const, content: response.content as unknown as string },
+            {
+              role: "user" as const,
+              content: [
+                { type: "tool_result", tool_use_id: block.id, content: result },
+              ] as unknown as string,
+            },
+          ];
+          continueLoop = true;
+        }
+      }
+
+      if (response.stop_reason === "end_turn") continueLoop = false;
+    }
+
+    if (iterations >= MAX_TOOL_ITERATIONS) {
+      controller.enqueue(encoder.encode("\n\n⚠️ *Max tool iterations reached.*"));
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("credit_balance_too_low") || msg.includes("credit balance is too low")) {
+      controller.enqueue(encoder.encode(
+        "⚠️ **Insufficient Anthropic credits.**\n\nPlease add credits at [console.anthropic.com → Billing](https://console.anthropic.com/settings/billing).\n\nOr switch to **Ollama** in the model selector to run models locally for free."
+      ));
+    } else if (msg.includes("invalid_api_key") || msg.includes("authentication")) {
+      controller.enqueue(encoder.encode("⚠️ Invalid API key. Check your `ANTHROPIC_API_KEY` in `.env.local`."));
+    } else {
+      controller.enqueue(encoder.encode(`❌ ${msg}`));
+    }
+  }
+}
+
+async function streamOpenAI(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  model: string,
+  systemPrompt: string,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder
+) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    controller.enqueue(
+      encoder.encode(
+        "OPENAI_API_KEY is not set. Add it to .env.local.\n\nSwitch to Anthropic or configure your OpenAI key to use GPT models."
+      )
+    );
+    return;
+  }
+
+  const client = new OpenAI({ apiKey });
+
+  // Convert CHAT_TOOLS (Anthropic format) to OpenAI function calling format
+  const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = CHAT_TOOLS.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema,
+    },
+  }));
+
+  let currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    ...messages,
+  ];
+
+  let continueLoop = true;
+  let iterations = 0;
+  const MAX_TOOL_ITERATIONS = 10;
+
+  try {
+    while (continueLoop && iterations < MAX_TOOL_ITERATIONS) {
+      iterations++;
+      continueLoop = false;
+
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: 4096,
+        messages: currentMessages,
+        tools,
+        tool_choice: "auto",
+        stream: false,
+      });
+
+      const choice = response.choices[0];
+      const assistantMessage = choice.message;
+
+      // Stream out any text content
+      if (assistantMessage.content) {
+        controller.enqueue(encoder.encode(assistantMessage.content));
+      }
+
+      // Handle tool calls
+      if (choice.finish_reason === "tool_calls" && assistantMessage.tool_calls?.length) {
+        // Append the assistant message (with tool_calls) to history
+        currentMessages = [...currentMessages, assistantMessage];
+
+        const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
+
+        for (const toolCall of assistantMessage.tool_calls) {
+          const toolName = toolCall.function.name;
+          let toolInput: Record<string, unknown> = {};
+          try {
+            toolInput = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+          } catch {
+            toolInput = {};
+          }
+
+          const result = await executeTool(toolName, toolInput);
+          controller.enqueue(encoder.encode(`\n\n⚡ *Used tool: ${toolName}*\n\n`));
+
+          toolResultMessages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: result,
+          });
+        }
+
+        // Append all tool results and continue the loop
+        currentMessages = [...currentMessages, ...toolResultMessages];
+        continueLoop = true;
+      }
+    }
+
+    if (iterations >= MAX_TOOL_ITERATIONS) {
+      controller.enqueue(encoder.encode("\n\n⚠️ *Max tool iterations reached.*"));
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("invalid_api_key") || msg.includes("Incorrect API key")) {
+      controller.enqueue(encoder.encode("⚠️ Invalid OpenAI API key. Check your `OPENAI_API_KEY` in `.env.local`."));
+    } else if (msg.includes("rate_limit_exceeded") || msg.includes("Rate limit")) {
+      controller.enqueue(encoder.encode("⚠️ OpenAI rate limit exceeded. Please wait a moment and try again."));
+    } else if (msg.includes("model_not_found") || msg.includes("does not exist")) {
+      controller.enqueue(encoder.encode(`⚠️ Model "${model}" not found. Check your OpenAI model name.`));
+    } else {
+      controller.enqueue(encoder.encode(`❌ OpenAI error: ${msg}`));
+    }
+  }
+}
+
+async function streamOllama(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  model: string,
+  systemPrompt: string,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder
+) {
+  const baseUrl = process.env.OLLAMA_BASE_URL || "http://ollama:11434";
+
+  try {
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        stream: true,
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!res.ok) {
+      controller.enqueue(
+        encoder.encode(
+          `Ollama error (${res.status}). Make sure Ollama is running at ${baseUrl} and the model "${model}" is pulled.`
+        )
+      );
+      return;
+    }
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value);
+      for (const line of chunk.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.message?.content) {
+            controller.enqueue(encoder.encode(parsed.message.content));
+          }
+        } catch {}
+      }
+    }
+  } catch (err) {
+    controller.enqueue(
+      encoder.encode(
+        `Cannot reach Ollama at ${baseUrl}. Make sure the service is running.\n\nError: ${String(err)}`
+      )
+    );
+  }
+}
+
+// ─── Route handler ─────────────────────────────────────────────────────────────
+
+export async function POST(req: Request) {
+  // Auth check
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  // Rate limiting: 20 messages/min per user
+  const rl = rateLimit(`chat:${userId}`, LIMITS.chat.limit, LIMITS.chat.windowMs);
+  if (!rl.allowed) {
+    return new Response(
+      `Rate limit exceeded. Try again in ${rl.retryAfter}s.`,
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } }
+    );
+  }
+
+  let messages: Array<{ role: "user" | "assistant"; content: string }>;
+  let systemContext: string | undefined;
+  let provider: string;
+  let model: string | undefined;
+  let teamId: string | undefined;
+
+  try {
+    const body = await req.json();
+    messages = body.messages ?? [];
+    systemContext = body.systemContext;
+    provider = body.provider ?? "anthropic";
+    model = body.model;
+    teamId = body.teamId;
+  } catch {
+    return new Response("Invalid JSON body", { status: 400 });
+  }
+
+  // Build system prompt
+  let systemPrompt = BASE_SYSTEM;
+
+  if (teamId === "coordinator") {
+    const coordinatorContext = await buildCoordinatorContext();
+    systemPrompt = `${BASE_SYSTEM}\n\n${coordinatorContext}`;
+  } else if (teamId && teamId !== "all") {
+    const teamContext = await buildTeamContext(teamId);
+    if (teamContext) {
+      systemPrompt = `${BASE_SYSTEM}\n\n## Active Team Context\n${teamContext}`;
+    }
+  }
+
+  if (systemContext) {
+    systemPrompt = `${systemPrompt}\n\n## Additional Context\n${systemContext}`;
+  }
+
+  const encoder = new TextEncoder();
+
+  // Default models per provider
+  const defaultModels: Record<string, string> = {
+    anthropic: "claude-sonnet-4-6",
+    openai: "gpt-4o",
+    ollama: "qwen2.5:7b",
+  };
+  const resolvedModel = model || defaultModels[provider] || "claude-sonnet-4-6";
+
   const readable = new ReadableStream({
     async start(controller) {
       try {
-        let currentMessages = [...messages];
-        let continueLoop = true;
-
-        while (continueLoop) {
-          const response = await client.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 2048,
-            system: SYSTEM_PROMPT,
-            messages: currentMessages,
-            tools: tools as Anthropic.Messages.Tool[],
-          });
-
-          continueLoop = false;
-
-          for (const block of response.content) {
-            if (block.type === "text") {
-              controller.enqueue(encoder.encode(block.text));
-            } else if (block.type === "tool_use") {
-              // Execute the tool
-              const result = await executeTool(
-                block.name,
-                block.input as Record<string, unknown>
-              );
-
-              // Stream a status update to the user
-              controller.enqueue(
-                encoder.encode(`\n\n⚡ *Used tool: ${block.name}*\n\n`)
-              );
-
-              // Add tool use and result to messages for the next iteration
-              currentMessages = [
-                ...currentMessages,
-                { role: "assistant" as const, content: response.content as unknown as string },
-                {
-                  role: "user" as const,
-                  content: [
-                    {
-                      type: "tool_result",
-                      tool_use_id: block.id,
-                      content: result,
-                    },
-                  ] as unknown as string,
-                },
-              ];
-
-              // Continue the loop so Claude can process the tool result
-              continueLoop = true;
-            }
-          }
-
-          // If stop_reason is "end_turn" with no tool use, we're done
-          if (response.stop_reason === "end_turn") {
-            continueLoop = false;
-          }
+        if (provider === "openai") {
+          await streamOpenAI(messages, resolvedModel, systemPrompt, controller, encoder);
+        } else if (provider === "ollama") {
+          await streamOllama(messages, resolvedModel, systemPrompt, controller, encoder);
+        } else {
+          await streamAnthropic(messages, resolvedModel, systemPrompt, controller, encoder);
+          // Track usage after Anthropic call (fire-and-forget)
+          trackUsage({
+            userId,
+            service: "claude",
+            endpoint: resolvedModel,
+          }).catch(() => {});
         }
       } catch (err) {
         controller.enqueue(encoder.encode(`\n\n❌ Error: ${String(err)}`));

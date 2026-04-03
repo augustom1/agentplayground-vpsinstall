@@ -8,6 +8,18 @@
 
 import { prisma } from "@/lib/prisma";
 import { PERMISSION_PRESETS } from "@/lib/agent-permissions";
+import fs from "fs";
+import path from "path";
+
+const FILES_ROOT = process.env.FILES_ROOT || path.join(process.cwd(), "data", "files");
+const MAX_READ_BYTES = 50 * 1024; // 50 KB cap on file reads
+
+function safeFilePath(rel: string): string {
+  if (!fs.existsSync(FILES_ROOT)) fs.mkdirSync(FILES_ROOT, { recursive: true });
+  const resolved = path.resolve(FILES_ROOT, rel.replace(/^\/+/, ""));
+  if (!resolved.startsWith(FILES_ROOT)) throw new Error("Path traversal not allowed");
+  return resolved;
+}
 
 /** Anthropic tool definition format */
 export interface ToolDefinition {
@@ -137,11 +149,259 @@ export const CHAT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "web_search",
+    description:
+      "Search the web for current information, news, research data, market insights, or any factual queries. Use this whenever you need up-to-date information.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+        num_results: {
+          type: "number",
+          description: "Number of results to return (default: 5, max: 10)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "web_browse",
+    description:
+      "Fetch and read the content of a specific web page. Use for research, extracting data from URLs, reading documentation, monitoring pages, or gathering competitor intelligence.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL to browse (must include https://)" },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "create_chatbot",
+    description:
+      "Create a chatbot agent with a specific persona and purpose. The chatbot is added to a team and can handle customer service, support, domain Q&A, or any conversational task.",
+    input_schema: {
+      type: "object",
+      properties: {
+        teamId: { type: "string", description: "Team ID to add this chatbot to" },
+        name: { type: "string", description: "Chatbot name" },
+        persona: {
+          type: "string",
+          description: "Chatbot personality, role, and behavior instructions",
+        },
+        welcomeMessage: {
+          type: "string",
+          description: "Opening message shown to users",
+        },
+        topics: {
+          type: "array",
+          items: { type: "string" },
+          description: "Topics and domains this chatbot handles",
+        },
+      },
+      required: ["teamId", "name", "persona"],
+    },
+  },
+  {
+    name: "delegate_to_team",
+    description:
+      "Delegate a task to a specific agent team. Use this as the Coordinator to assign work to the right team. Creates a tracked task record in the system.",
+    input_schema: {
+      type: "object",
+      properties: {
+        teamId: { type: "string", description: "Team ID to delegate to" },
+        teamName: { type: "string", description: "Team name" },
+        title: { type: "string", description: "Task title" },
+        description: { type: "string", description: "Detailed task description" },
+        priority: {
+          type: "string",
+          enum: ["low", "medium", "high", "critical"],
+          description: "Task priority (default: medium)",
+        },
+      },
+      required: ["teamId", "teamName", "title", "description"],
+    },
+  },
+  {
     name: "list_available_skills",
     description: "List all default and custom skills available in the system.",
     input_schema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "list_team_details",
+    description:
+      "Get the full details of a specific agent team, including all its agents, skills, and CLI functions. Use this when the user wants to review or modify an existing team.",
+    input_schema: {
+      type: "object",
+      properties: {
+        teamId: { type: "string", description: "The team ID to retrieve" },
+      },
+      required: ["teamId"],
+    },
+  },
+  {
+    name: "update_team",
+    description:
+      "Update an existing agent team's name, description, language, or status. Use this when the user wants to rename a team or change its configuration.",
+    input_schema: {
+      type: "object",
+      properties: {
+        teamId: { type: "string", description: "Team ID to update" },
+        name: { type: "string", description: "New team name (optional)" },
+        description: { type: "string", description: "New description (optional)" },
+        language: { type: "string", description: "New runtime language (optional)" },
+        status: {
+          type: "string",
+          enum: ["healthy", "idle", "error", "deploying"],
+          description: "New status (optional)",
+        },
+      },
+      required: ["teamId"],
+    },
+  },
+  {
+    name: "update_agent",
+    description:
+      "Update an existing agent's name, description, AI model, system prompt, or capabilities. Use this to refine how an agent behaves.",
+    input_schema: {
+      type: "object",
+      properties: {
+        agentId: { type: "string", description: "Agent ID to update" },
+        name: { type: "string", description: "New name (optional)" },
+        description: { type: "string", description: "New description (optional)" },
+        model: { type: "string", description: "New AI model (optional)" },
+        systemPrompt: { type: "string", description: "New system prompt (optional)" },
+        capabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "New capabilities list (optional)",
+        },
+      },
+      required: ["agentId"],
+    },
+  },
+  {
+    name: "log_improvement",
+    description:
+      "Log an optimization opportunity, repeated pattern, or learning detected in the system. Use this proactively whenever you notice a task that could be automated, a workflow that repeats, or an inefficiency that could be reduced. These logs form the basis of the self-improvement flywheel.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title for this improvement" },
+        description: {
+          type: "string",
+          description: "Detailed description — what pattern was detected, what could be automated, how it would reduce cost or effort",
+        },
+        category: {
+          type: "string",
+          enum: ["performance", "accuracy", "efficiency", "automation", "cost", "general"],
+          description: "Category of improvement (default: efficiency)",
+        },
+        impact: {
+          type: "string",
+          enum: ["low", "medium", "high"],
+          description: "Estimated impact level (default: medium)",
+        },
+        source: {
+          type: "string",
+          description: "What triggered this insight — e.g., 'repeated user request', 'task pattern', 'manual workflow'",
+        },
+      },
+      required: ["title", "description"],
+    },
+  },
+  {
+    name: "generate_tool",
+    description:
+      "Convert a repeated workflow or manual process into a permanent, reusable skill in the tools catalog. Use this when you have identified a pattern that should become a tool — it creates a skill record so future tasks can use it instead of re-solving from scratch. This is the core of the local optimization loop.",
+    input_schema: {
+      type: "object",
+      properties: {
+        teamId: { type: "string", description: "Team ID to associate this skill with" },
+        name: { type: "string", description: "Tool/skill name — should be action-oriented (e.g., 'Parse Invoice PDF', 'Send Weekly Report')" },
+        description: {
+          type: "string",
+          description: "What this tool does and when to use it",
+        },
+        category: {
+          type: "string",
+          enum: ["general", "data", "communication", "code", "research", "system"],
+          description: "Skill category",
+        },
+        instructions: {
+          type: "string",
+          description: "Step-by-step instructions for how to execute this tool — detailed enough that an agent can follow them without reasoning from scratch",
+        },
+        generatedFrom: {
+          type: "string",
+          description: "Describe the repeated pattern or manual process this tool was generated from",
+        },
+      },
+      required: ["teamId", "name", "description", "instructions"],
+    },
+  },
+  // ─── File System Tools ───────────────────────────────────────────────────────
+  {
+    name: "list_files",
+    description:
+      "List files and folders in the shared file storage. Use to browse what files are available before reading them.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Directory path to list (default: root)" },
+      },
+    },
+  },
+  {
+    name: "read_file",
+    description:
+      "Read the text content of a file from shared storage. Use to inspect documents, configs, CSVs, code, etc. Only works on text files (not images or PDFs).",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path to read" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "write_file",
+    description:
+      "Create or overwrite a text file in shared storage. Use to save reports, logs, generated code, analysis results, or any text content produced during a task.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path to write (e.g. 'reports/analysis.md')" },
+        content: { type: "string", description: "Text content to write" },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "delete_file",
+    description: "Delete a file or empty folder from shared storage.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File or folder path to delete" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "search_files",
+    description:
+      "Semantically search across embedded files using natural language. Returns the most relevant file chunks. Only works on files that have been embedded (use the Embed button in the Files page, or the embed endpoint).",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Natural language search query" },
+        limit: { type: "number", description: "Max results to return (default: 5)" },
+      },
+      required: ["query"],
     },
   },
 ];
@@ -168,8 +428,36 @@ export async function executeTool(
         return await toolScheduleTask(input);
       case "query_data":
         return await toolQueryData(input);
+      case "web_search":
+        return await toolWebSearch(input);
+      case "web_browse":
+        return await toolWebBrowse(input);
+      case "create_chatbot":
+        return await toolCreateChatbot(input);
+      case "delegate_to_team":
+        return await toolDelegateToTeam(input);
       case "list_available_skills":
         return await toolListSkills();
+      case "list_team_details":
+        return await toolListTeamDetails(input);
+      case "update_team":
+        return await toolUpdateTeam(input);
+      case "update_agent":
+        return await toolUpdateAgent(input);
+      case "log_improvement":
+        return await toolLogImprovement(input);
+      case "generate_tool":
+        return await toolGenerateTool(input);
+      case "list_files":
+        return await toolListFiles(input);
+      case "read_file":
+        return await toolReadFile(input);
+      case "write_file":
+        return await toolWriteFile(input);
+      case "delete_file":
+        return await toolDeleteFile(input);
+      case "search_files":
+        return await toolSearchFiles(input);
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
@@ -327,4 +615,434 @@ async function toolListSkills(): Promise<string> {
     skills: skills.map((s: { name: string; description: string; category: string }) => ({ name: s.name, description: s.description, category: s.category })),
     count: skills.length,
   });
+}
+
+async function toolListTeamDetails(input: Record<string, unknown>): Promise<string> {
+  const team = await prisma.agentTeam.findUnique({
+    where: { id: input.teamId as string },
+    include: {
+      agents: true,
+      skills: true,
+      cliFunctions: true,
+      _count: { select: { tasks: true } },
+    },
+  });
+  if (!team) return JSON.stringify({ error: "Team not found" });
+  return JSON.stringify({ success: true, team });
+}
+
+async function toolUpdateTeam(input: Record<string, unknown>): Promise<string> {
+  const updateData: {
+    name?: string;
+    description?: string;
+    language?: string;
+    status?: string;
+  } = {};
+  if (input.name) updateData.name = input.name as string;
+  if (input.description !== undefined) updateData.description = input.description as string;
+  if (input.language) updateData.language = input.language as string;
+  if (input.status) updateData.status = input.status as string;
+
+  const team = await prisma.agentTeam.update({
+    where: { id: input.teamId as string },
+    data: updateData,
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      action: `Updated agent team "${team.name}"`,
+      type: "deploy",
+      teamName: team.name,
+      teamId: team.id,
+    },
+  });
+
+  return JSON.stringify({
+    success: true,
+    team: { id: team.id, name: team.name },
+    message: `Team "${team.name}" updated successfully.`,
+  });
+}
+
+async function toolUpdateAgent(input: Record<string, unknown>): Promise<string> {
+  const updateData: {
+    name?: string;
+    description?: string;
+    model?: string;
+    systemPrompt?: string;
+    capabilities?: string[];
+  } = {};
+  if (input.name) updateData.name = input.name as string;
+  if (input.description !== undefined) updateData.description = input.description as string;
+  if (input.model) updateData.model = input.model as string;
+  if (input.systemPrompt !== undefined) updateData.systemPrompt = input.systemPrompt as string;
+  if (input.capabilities) updateData.capabilities = input.capabilities as string[];
+
+  const agent = await prisma.agent.update({
+    where: { id: input.agentId as string },
+    data: updateData,
+  });
+
+  return JSON.stringify({
+    success: true,
+    agent: { id: agent.id, name: agent.name },
+    message: `Agent "${agent.name}" updated successfully.`,
+  });
+}
+
+async function toolWebSearch(input: Record<string, unknown>): Promise<string> {
+  const query = input.query as string;
+  const numResults = (input.num_results as number) || 5;
+
+  try {
+    // Use Brave Search if key is configured
+    const braveKey = process.env.BRAVE_SEARCH_API_KEY;
+    if (braveKey) {
+      const res = await fetch(
+        `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${numResults}`,
+        { headers: { "X-Subscription-Token": braveKey, Accept: "application/json" } }
+      );
+      const data = await res.json();
+      const results = (data.web?.results || []).map((r: Record<string, string>) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.description,
+      }));
+      return JSON.stringify({ success: true, query, results, source: "Brave Search" });
+    }
+
+    // Fallback: DuckDuckGo Instant Answer API
+    const res = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      { headers: { "User-Agent": "AgentDashboard/1.0" } }
+    );
+    const data = await res.json();
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+
+    if (data.Abstract) {
+      results.push({ title: data.Heading, url: data.AbstractURL, snippet: data.Abstract });
+    }
+    for (const topic of (data.RelatedTopics || []).slice(0, numResults - 1)) {
+      if (topic.Text && topic.FirstURL) {
+        results.push({
+          title: topic.Text.split(" - ")[0] || topic.Text,
+          url: topic.FirstURL,
+          snippet: topic.Text,
+        });
+      }
+    }
+
+    return JSON.stringify({
+      success: true,
+      query,
+      results,
+      source: "DuckDuckGo",
+      note: "For full web search results, set BRAVE_SEARCH_API_KEY in your environment.",
+    });
+  } catch (err) {
+    return JSON.stringify({ error: `Web search failed: ${String(err)}` });
+  }
+}
+
+async function toolWebBrowse(input: Record<string, unknown>): Promise<string> {
+  const url = input.url as string;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; AgentDashboard/1.0)" },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) {
+      return JSON.stringify({ error: `HTTP ${res.status}: ${res.statusText}` });
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("text")) {
+      return JSON.stringify({ error: `Non-text content type: ${contentType}` });
+    }
+
+    const html = await res.text();
+    // Extract readable text: strip scripts, styles, then tags
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 4000);
+
+    return JSON.stringify({ success: true, url, content: text, length: text.length });
+  } catch (err) {
+    return JSON.stringify({ error: `Browse failed: ${String(err)}` });
+  }
+}
+
+async function toolCreateChatbot(input: Record<string, unknown>): Promise<string> {
+  const systemPrompt = [
+    input.persona as string,
+    input.welcomeMessage ? `\nWelcome message: "${input.welcomeMessage as string}"` : "",
+    input.topics
+      ? `\nTopics you handle: ${(input.topics as string[]).join(", ")}`
+      : "",
+    "\nBe helpful, concise, and stay on-topic. Escalate to a human agent when the request is outside your scope.",
+  ]
+    .filter(Boolean)
+    .join("");
+
+  const agent = await prisma.agent.create({
+    data: {
+      name: input.name as string,
+      description: `Chatbot: ${input.persona as string}`.slice(0, 200),
+      model: "claude-sonnet-4-6",
+      capabilities: ["chat", "customer-service", ...((input.topics as string[]) || [])],
+      systemPrompt,
+      teamId: input.teamId as string,
+    },
+  });
+
+  return JSON.stringify({
+    success: true,
+    chatbot: { id: agent.id, name: agent.name },
+    message: `Chatbot "${agent.name}" created and added to the team.`,
+    embedNote:
+      "To embed this chatbot, use the /api/chat endpoint with this agent's teamId in the system context.",
+  });
+}
+
+async function toolLogImprovement(input: Record<string, unknown>): Promise<string> {
+  const improvement = await prisma.improvement.create({
+    data: {
+      title: input.title as string,
+      description: input.description as string,
+      category: (input.category as string) || "efficiency",
+      impact: (input.impact as string) || "medium",
+      source: (input.source as string) || null,
+      applied: false,
+    },
+  });
+
+  return JSON.stringify({
+    success: true,
+    improvement: { id: improvement.id, title: improvement.title, impact: improvement.impact },
+    message: `Improvement logged: "${improvement.title}". Visible in the Tools Catalog → Improvements tab.`,
+  });
+}
+
+async function toolGenerateTool(input: Record<string, unknown>): Promise<string> {
+  const instructions = input.generatedFrom
+    ? `${input.instructions as string}\n\n---\nAuto-generated from: ${input.generatedFrom as string}`
+    : (input.instructions as string);
+
+  const skill = await prisma.skill.create({
+    data: {
+      name: input.name as string,
+      description: input.description as string,
+      category: (input.category as string) || "general",
+      instructions,
+      teamId: input.teamId as string,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      action: `Generated tool "${skill.name}" from repeated workflow`,
+      type: "deploy",
+      teamId: input.teamId as string,
+    },
+  });
+
+  return JSON.stringify({
+    success: true,
+    skill: { id: skill.id, name: skill.name, category: skill.category },
+    message: `Tool "${skill.name}" generated and added to the Tools Catalog. Future tasks can now use this skill instead of solving from scratch.`,
+  });
+}
+
+async function toolDelegateToTeam(input: Record<string, unknown>): Promise<string> {
+  const task = await prisma.task.create({
+    data: {
+      title: input.title as string,
+      description: input.description as string,
+      priority: (input.priority as string) || "medium",
+      status: "pending",
+      teamId: input.teamId as string,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      action: `Coordinator delegated task "${task.title}" to ${input.teamName as string}`,
+      type: "task",
+      teamName: input.teamName as string,
+      teamId: input.teamId as string,
+    },
+  });
+
+  return JSON.stringify({
+    success: true,
+    task: { id: task.id, title: task.title, status: task.status },
+    message: `Task "${task.title}" delegated to ${input.teamName as string} with ${task.priority} priority.`,
+  });
+}
+
+// ─── File System Tool Handlers ────────────────────────────────────────────────
+
+async function toolListFiles(input: Record<string, unknown>): Promise<string> {
+  const rel = (input.path as string) || "";
+  try {
+    const abs = safeFilePath(rel);
+    if (!fs.existsSync(abs)) {
+      return JSON.stringify({ success: true, path: rel, entries: [], note: "Directory is empty or does not exist" });
+    }
+    const stat = fs.statSync(abs);
+    if (!stat.isDirectory()) {
+      return JSON.stringify({ error: "Path is a file, not a directory. Use read_file to read it." });
+    }
+    const names = fs.readdirSync(abs);
+    const entries = names.map((name) => {
+      const childAbs = path.join(abs, name);
+      const s = fs.statSync(childAbs);
+      return {
+        name,
+        path: rel ? `${rel}/${name}` : name,
+        isDirectory: s.isDirectory(),
+        size: s.isDirectory() ? 0 : s.size,
+        modifiedAt: s.mtime.toISOString(),
+      };
+    }).sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return JSON.stringify({ success: true, path: rel || "/", entries, count: entries.length });
+  } catch (err) {
+    return JSON.stringify({ error: String(err) });
+  }
+}
+
+async function toolReadFile(input: Record<string, unknown>): Promise<string> {
+  const rel = input.path as string;
+  try {
+    const abs = safeFilePath(rel);
+    if (!fs.existsSync(abs)) return JSON.stringify({ error: "File not found" });
+    if (fs.statSync(abs).isDirectory()) return JSON.stringify({ error: "Path is a directory. Use list_files." });
+
+    const stat = fs.statSync(abs);
+    if (stat.size > MAX_READ_BYTES) {
+      return JSON.stringify({
+        error: `File too large to read directly (${(stat.size / 1024).toFixed(1)} KB). Embed it first and use search_files.`,
+      });
+    }
+
+    const content = fs.readFileSync(abs, "utf-8");
+    return JSON.stringify({
+      success: true,
+      path: rel,
+      content,
+      size: stat.size,
+      lines: content.split("\n").length,
+    });
+  } catch (err) {
+    return JSON.stringify({ error: String(err) });
+  }
+}
+
+async function toolWriteFile(input: Record<string, unknown>): Promise<string> {
+  const rel = input.path as string;
+  const content = input.content as string;
+  try {
+    const abs = safeFilePath(rel);
+    const dir = path.dirname(abs);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(abs, content, "utf-8");
+    return JSON.stringify({
+      success: true,
+      path: rel,
+      size: Buffer.byteLength(content, "utf-8"),
+      message: `File written: ${rel}`,
+    });
+  } catch (err) {
+    return JSON.stringify({ error: String(err) });
+  }
+}
+
+async function toolDeleteFile(input: Record<string, unknown>): Promise<string> {
+  const rel = input.path as string;
+  try {
+    const abs = safeFilePath(rel);
+    if (!fs.existsSync(abs)) return JSON.stringify({ error: "File not found" });
+    const stat = fs.statSync(abs);
+    if (stat.isDirectory()) {
+      fs.rmSync(abs, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(abs);
+    }
+    return JSON.stringify({ success: true, path: rel, message: `Deleted: ${rel}` });
+  } catch (err) {
+    return JSON.stringify({ error: String(err) });
+  }
+}
+
+async function toolSearchFiles(input: Record<string, unknown>): Promise<string> {
+  const query = input.query as string;
+  const limit = (input.limit as number) || 5;
+
+  const ollamaUrl = process.env.OLLAMA_BASE_URL || "http://ollama:11434";
+
+  try {
+    // Get query embedding from Ollama
+    const embedRes = await fetch(`${ollamaUrl}/api/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "nomic-embed-text", prompt: query }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!embedRes.ok) {
+      return JSON.stringify({
+        error: "Could not reach Ollama for semantic search. Make sure nomic-embed-text is pulled.",
+        hint: "Run: docker exec vps-ollama ollama pull nomic-embed-text",
+      });
+    }
+
+    const { embedding } = await embedRes.json() as { embedding: number[] };
+
+    // pgvector cosine similarity search
+    const results = await prisma.$queryRaw<Array<{
+      filePath: string;
+      chunkIndex: number;
+      content: string;
+      similarity: number;
+    }>>`
+      SELECT "filePath", "chunkIndex", "content",
+             1 - (vector <=> ${JSON.stringify(embedding)}::vector) AS similarity
+      FROM file_embeddings
+      ORDER BY vector <=> ${JSON.stringify(embedding)}::vector
+      LIMIT ${limit}
+    `;
+
+    if (!results.length) {
+      return JSON.stringify({
+        success: true,
+        query,
+        results: [],
+        note: "No embedded files found. Use the Embed button in the Files page to index files first.",
+      });
+    }
+
+    return JSON.stringify({
+      success: true,
+      query,
+      results: results.map((r) => ({
+        file: r.filePath,
+        chunk: r.chunkIndex,
+        similarity: Number(r.similarity).toFixed(3),
+        excerpt: r.content.slice(0, 500),
+      })),
+    });
+  } catch (err) {
+    return JSON.stringify({ error: `File search failed: ${String(err)}` });
+  }
 }

@@ -9,6 +9,7 @@
  *   or via prisma: npx prisma db seed
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_SKILLS, DB_AGENT_TEAM, FILE_AGENT_TEAM } from "@/lib/default-skills";
 
@@ -25,7 +26,7 @@ export async function seedDefaults() {
     dbTeam = await prisma.agentTeam.create({
       data: {
         ...DB_AGENT_TEAM,
-        config: DB_AGENT_TEAM.config as Record<string, unknown>,
+        config: DB_AGENT_TEAM.config as unknown as Prisma.InputJsonValue,
       },
     });
     console.log(`  ✓ Created team: ${dbTeam.name}`);
@@ -58,7 +59,7 @@ export async function seedDefaults() {
     fileTeam = await prisma.agentTeam.create({
       data: {
         ...FILE_AGENT_TEAM,
-        config: FILE_AGENT_TEAM.config as Record<string, unknown>,
+        config: FILE_AGENT_TEAM.config as unknown as Prisma.InputJsonValue,
       },
     });
     console.log(`  ✓ Created team: ${fileTeam.name}`);

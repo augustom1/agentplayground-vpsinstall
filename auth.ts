@@ -27,9 +27,6 @@ declare module "next-auth" {
       plan: string;
     } & DefaultSession["user"];
   }
-}
-
-declare module "next-auth/jwt" {
   interface JWT {
     id?: string;
     role?: string;

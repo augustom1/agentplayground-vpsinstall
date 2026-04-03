@@ -322,7 +322,7 @@ header "4. Starting the Stack"
 # ══════════════════════════════════════════════════════════════════
 
 info "Building and starting all services (first run pulls images — may take 5–10 min)..."
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # ══════════════════════════════════════════════════════════════════
 header "5. Waiting for Core Services"
@@ -382,7 +382,7 @@ echo ""
 echo -e "  ${BOLD}Common commands:${NC}"
 echo -e "  View logs:    ${CYAN}docker compose logs -f [service-name]${NC}"
 echo -e "  All status:   ${CYAN}docker compose ps${NC}"
-echo -e "  Update stack: ${CYAN}git pull && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build${NC}"
+echo -e "  Update stack: ${CYAN}git pull && docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build${NC}"
 echo -e "  DB backup:    ${CYAN}./backup-db.sh${NC}"
 echo ""
 log "Done."

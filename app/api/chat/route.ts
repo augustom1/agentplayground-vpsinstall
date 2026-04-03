@@ -282,7 +282,8 @@ async function streamOpenAI(
 
         const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
 
-        for (const toolCall of assistantMessage.tool_calls as OpenAI.Chat.Completions.ChatCompletionMessageToolCall[]) {
+        type FnToolCall = { id: string; type: string; function: { name: string; arguments: string } };
+        for (const toolCall of (assistantMessage.tool_calls as FnToolCall[])) {
           const toolName = toolCall.function.name;
           let toolInput: Record<string, unknown> = {};
           try {
